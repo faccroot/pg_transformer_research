@@ -89,6 +89,15 @@ is:
 3. `+` early-exit auxiliary supervision
 4. `+` `segment-prev-read` as the first structural challenger
 
+The important part is that the base is strong **and** small:
+
+- trusted exact roundtrip BPB: `1.43412685`
+- compressed artifact size: `6,925,213` bytes
+- remaining room under the `16,000,000` byte cap: about `9.07 MB`
+
+So this is not a near-cap artifact that has nowhere left to go. It is a strong
+under-cap platform with room for structural additions.
+
 The clearest promotion memo for that stack is in
 [research/project_wide/20260401_turboquant_transfer_handoff.md](./research/project_wide/20260401_turboquant_transfer_handoff.md).
 

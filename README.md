@@ -9,124 +9,135 @@ diagnostics, research notes, and training-system experiments.
 - Official challenge repo: <https://github.com/openai/parameter-golf>
 - Public fork guide: [PUBLIC_FORK_GUIDE.md](./PUBLIC_FORK_GUIDE.md)
 
-## What This Repo Is
-
-We are treating Parameter Golf as both:
-
-- a **tiny-artifact language modeling** problem
-- and a **compute allocation / training systems** problem
-
-The basic thesis is:
-
-- keep the final artifact tiny
-- allow training-time structure to be much richer
-- use training-time-only scaffolding when it buys BPB
-- prove signs-of-life first, then optimize systems later
-
-That has led us to a portfolio of lanes:
-
-- Turbo/QAT mainline compression path
-- curriculum and early-exit supervision
-- JEPA / long-context / slow-memory branches
-- hardmax structural-controller transfer
-- latent-state / prosody / branching work
-- representation-learning / geometry-prior work
-- helper-worker / manager / replay / teacher-cache training systems
-
-## Current Best Public-Facing Mainline
-
-The strongest trusted competition-facing path right now is:
-
-1. current-size Turbo/QAT base
-2. `+` phase-gated curriculum
-3. `+` early-exit auxiliary supervision
-4. `+` `segment-prev-read` as the first structural challenger
-
-Key trusted reference:
-
-- exact roundtrip BPB: `1.43412685`
-- artifact size: `6,925,213` bytes
-- promotion memo: [20260401_turboquant_transfer_handoff.md](./research/project_wide/20260401_turboquant_transfer_handoff.md)
-
-Best clean additive wins on the main path:
-
-- phase-gated curriculum: `-0.02495940` BPB
-- early-exit aux: `-0.01501839` BPB
-- segment-prev-read: about `-0.0155` / `-0.0135` on exact probes
-
-## Wild Results We Think Matter
-
-Some of the most interesting results here are not the mainline leaderboard
-stack, but they are exactly the kind of weird signals we think are worth
-pursuing.
-
-### 1. Execution-Trace Structural Transfer Improves FineWeb BPB
-
-We pretrained a tiny hardmax structural controller on synthetic execution
-traces, transferred its learned `state_book` into a language model, and saw a
-real FineWeb BPB improvement.
-
-Matched results:
+We trained a tiny controller to execute programs on a synthetic VM. Then we
+transferred part of it into a language model. FineWeb BPB improved. We do not
+fully understand why execution-trace structure helps natural-language
+compression, but it does:
 
 - plain control: `1.88888776`
 - matched random structural baseline: `1.85942869`
 - trace `state_book` transfer: `1.83989451`
 - trace `state_book` + `freeze300`: `1.82215938`
 
-That is a strange transfer path on its face: execution-trace supervision
-helping natural-language modeling. It is one of the strongest "weird but real"
-results in the repo.
+That is the tone of this repo: not "safe tweaks to a baseline," but repeated
+attempts to find compression-significant structure that should not obviously
+work, then test it cleanly enough that the result survives skepticism.
 
-Primary notes:
+## Results That Shouldn't Work But Do
+
+### 1. Execution-Trace Transfer Helps FineWeb
+
+The cleanest weird result in the repo is the hardmax/controller lane:
+
+- pretrain a tiny structural controller on synthetic execution traces
+- transfer its learned `state_book` into the LM
+- briefly freeze that transferred vocabulary so the trunk learns to use it
+- FineWeb exact BPB improves materially
+
+This is not just "add a small side path." The matched random structural
+baseline is already strong, and the trace-pretrained transfer still beats it.
+
+Read:
 
 - [execution_trace_hardmax_lane_20260403.md](./research/project_wide/execution_trace_hardmax_lane_20260403.md)
 - [hardmax_structural_controller_lane_20260403.md](./research/project_wide/hardmax_structural_controller_lane_20260403.md)
 
-### 2. Segment-Level Previous-Summary Read Is a Real Long-Context Win
+### 2. Memory Helps Only When It Runs On A Slower Clock
 
-The cleanest JEPA / long-context architectural result so far is not persistent
-token-rate carry, but a slower-clock segment memory with previous-summary read.
+In the long-context lane, fast token-rate persistent carry was negative. The
+first real architectural win came from a slower-clock memory object: segment
+summaries with previous-segment read.
 
 - exact baseline: `2.10011343`
 - `segment-prev-read`, `nocarry`, `pred_weight=0.01`: `2.08463778`
 
-This suggests the useful memory object is a compressed slower-clock summary,
-not token-rate recurrent carry.
+The important claim is not just "this one config won." It is:
 
-Primary note:
+> Memory helped only when it ran on a slower clock than token rate.
+
+That is a stronger idea than this one repo.
+
+Read:
 
 - [20260329_turboquant_handoff_segmentlong.md](./research/project_wide/20260329_turboquant_handoff_segmentlong.md)
 
-### 3. Training As A Managed System, Not Just One Step Loop
+### 3. Our Best Mainline Is Strong Because It Is Small
 
-We also have a working `student + manager + helper worker` loop:
+The strongest trusted competition-facing foundation is the Turbo/QAT current-size
+stack. Its interesting property is not only score. It is score **plus**
+headroom:
 
-- replay queues
-- teacher caches
-- hidden-state helper workers
-- external controller decisions over live training
+- trusted exact roundtrip BPB: `1.43412685`
+- compressed artifact size: `6,925,213` bytes
+- remaining room under the `16,000,000` byte cap: about `9.07 MB`
 
-This is not yet a promoted leaderboard path, but it is an important systems
-direction for using training-time compute to improve one final tiny artifact.
+That matters because this is not a near-maxed-out artifact. It is a strong
+under-cap platform with room to add structure.
 
-## Breakthrough-Area Alignment
+The best clean validated levers on top of that path are baseline-relative:
 
-The challenge organizers explicitly asked for weird ideas. This repo already
-fits several of those buckets:
+- phase-gated curriculum: `1.52461262 -> 1.49965322`
+- early-exit aux: `1.59840419 -> 1.58338580`
+- segment-prev-read: `2.10011343 -> 2.08463778`
 
-- `ternary quantization`
-  - direct fit via [ternary_quant_mlx.py](./ternary_quant_mlx.py)
-- `JEPA`
-  - direct fit via sidecar, segment-clock, and harmonic trainers
-- `super long context`
-  - direct fit via `superlong`, `segmentlong`, and prefix-compiler work
+These numbers come from different matched ablations and runtimes, so they
+should be read as **within-lane deltas**, not as one flat leaderboard.
+
+Read:
+
+- [20260401_turboquant_transfer_handoff.md](./research/project_wide/20260401_turboquant_transfer_handoff.md)
+
+## Thesis
+
+Small models are bottlenecked less by raw parameter count than by supervision.
+Standard next-token prediction gives very little direct signal per position to
+shape a large internal state space. Much of the model lives in the null space
+of the loss.
+
+We attack that gap by adding extra structure where it buys delivered BPB:
+
+- auxiliary supervision
+- slower-clock memory objects
+- structural state vocabularies
+- curriculum and phase-gating
+- hidden-state teacher signals
+- managed helper lanes and replay/teacher caches
+
+Then we try to strip the result back to a tiny exportable artifact.
+
+## What We Killed And Why
+
+This repo is not just wins. A lot of the value is in what we ruled out.
+
+- `token-rate persistent carry`: dead. The carry object itself was bad, not
+  just expensive.
+- `budget routing / compute gating`: dead in the hardmax lane. Always-on
+  conditioning beat gating.
+- `order-only curriculum`: dead. The real lever was phase gating, not ordering
+  by itself.
+- `current harmonic read + JEPA stack`: dead as a modeling win so far, even
+  though the tensorized systems rewrite was a major engineering speedup.
+
+The pruning matters. It means the positive branches are surviving a real search
+process, not one lucky idea.
+
+## Why This Naturally Lands In The Organizers' Buckets
+
+We did not retroactively fit our work into the organizers' list. Several lanes
+landed there independently:
+
+- `JEPA / super long context`
+  - arrived at through segment-clock memory and slower summaries
 - `parameter tying / recurrence`
-  - partial direct fit via reused layer templates and slower-clock latent state
+  - arrived at through reused layer templates and explicit state/controller
+    paths
 - `test-time compute / adaptive training`
-  - partial fit via branching, compiler ideas, replay, teacher caches, and the
-    manager/helper-worker control plane
+  - arrived at through profiling, then helper workers, replay queues, teacher
+    caches, and an external manager
+- `ternary quantization`
+  - directly implemented in [ternary_quant_mlx.py](./ternary_quant_mlx.py)
 
-Areas we are adjacent to, but have not fully converted yet:
+Other requested areas are clear bridges from the current codebase:
 
 - `1-bit quantization`
 - `H-net tokenization`
@@ -135,8 +146,18 @@ Areas we are adjacent to, but have not fully converted yet:
 - `state-space / E2E TTT`
 - `megakernels`
 
-We think this is a strength, not a weakness: a lot of the repo is about
-building the right abstractions so those bridges become short.
+## If You Want To Read One Thing
+
+- If you want the result that surprised us most:
+  [execution_trace_hardmax_lane_20260403.md](./research/project_wide/execution_trace_hardmax_lane_20260403.md)
+- If you want the cleanest validated competition-facing win:
+  [20260401_turboquant_transfer_handoff.md](./research/project_wide/20260401_turboquant_transfer_handoff.md)
+- If you want the strongest long-context architectural result:
+  [20260329_turboquant_handoff_segmentlong.md](./research/project_wide/20260329_turboquant_handoff_segmentlong.md)
+- If you want to see what a managed training system looks like:
+  [student_manager_worker.py](./student_manager_worker.py),
+  [teacher_hidden_cache_worker.py](./teacher_hidden_cache_worker.py), and
+  [snapshot_signal_runtime.py](./snapshot_signal_runtime.py)
 
 ## Repo Map
 
@@ -150,31 +171,5 @@ building the right abstractions so those bridges become short.
   helpers
 - [tests](./tests): research-tooling and runtime tests
 
-## What Is Intentionally Not In The Public Fork
-
-This public repo excludes:
-
-- downloaded datasets and tokenizer binaries
-- generated run trees and archived run artifacts
-- local theory dumps
-- local cluster access / auth notes
-- mirrors of other competitors' submissions
-- large representation-learning artifact blobs
-
-That boundary is documented in:
-
-- [PUBLIC_FORK_GUIDE.md](./PUBLIC_FORK_GUIDE.md)
-
-## How To Read This Repo
-
-If you want the shortest path:
-
-1. read [PUBLIC_FORK_GUIDE.md](./PUBLIC_FORK_GUIDE.md)
-2. read [20260401_turboquant_transfer_handoff.md](./research/project_wide/20260401_turboquant_transfer_handoff.md)
-3. read [20260329_turboquant_handoff_segmentlong.md](./research/project_wide/20260329_turboquant_handoff_segmentlong.md)
-4. read [execution_trace_hardmax_lane_20260403.md](./research/project_wide/execution_trace_hardmax_lane_20260403.md)
-
-If you want the official challenge rules, leaderboard, and starter context, use
-the upstream repo:
-
-- <https://github.com/openai/parameter-golf>
+Most of this was built on a 14-node Mac Mini M4 Pro cluster. No H100 access
+yet.
