@@ -142,6 +142,17 @@ We attack that gap by adding extra structure where it buys delivered BPB:
 
 Then we try to strip the result back to a tiny exportable artifact.
 
+## Multi-Agent Research Orchestration
+
+This repo also treats research coordination itself as a systems problem. Instead
+of a linear backlog, we use a persisted MCTS-like experiment tree: branch notes,
+sweep manifests, observed results, and post-run diagnostics together define the
+current search frontier. Agents work on local branches of that tree, while an
+orchestrator reprioritizes promising nodes, expands new hypotheses, and prunes
+dead ones. Today this is closer to a persisted hypothesis tree with manual
+policy updates than to a literal UCB/PUCT search engine, but it already acts as
+an explicit multi-agent planning substrate for parallel research.
+
 ## What We Killed And Why
 
 This repo is not just wins. A lot of the value is in what we ruled out.
