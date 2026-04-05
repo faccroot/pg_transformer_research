@@ -285,6 +285,83 @@ Key export metrics:
 
 This is not yet a language-model result. It is the first exported controller init that stayed materially alive under execution-trace supervision and could be copied back into the repo for LM transfer.
 
+## New verification branch: did it learn execution dynamics or only trace completion?
+
+That question is now explicit:
+
+- [20260404_trace_execution_verification_lane.md](/home/zaytor/transformer_research/parameter-golf/research/project_wide/20260404_trace_execution_verification_lane.md)
+
+Current read:
+
+- held-out `val_*` metrics already show next-step generalization on unseen
+  synthetic programs
+- but the current pretrainer consumes rich current-trace inputs, not raw
+  program bytecode alone
+- so the strongest supported claim today is "held-out execution-dynamics model,"
+  not yet "verified learned executor"
+
+New tooling now exists to resolve that distinction on the next export:
+
+- [verify_hardmax_execution_trace.py](/home/zaytor/transformer_research/parameter-golf/tools/verify_hardmax_execution_trace.py)
+- [execution_trace_verifier.py](/home/zaytor/transformer_research/parameter-golf/execution_trace_verifier.py)
+
+And the trace pretrainer now saves a full checkpoint by default, so future
+exports can be verified directly instead of only transferred.
+
+First verifier-compatible export result:
+
+- [trace-pretrain-export-mixed-memops-verify.json](/home/zaytor/transformer_research/parameter-golf/research/iterations/generated/20260405_023107_mlx-hardmax-trace-pretrain-export-memops-verify/trace_execution_verification/trace-pretrain-export-mixed-memops-verify.json)
+
+Read:
+
+- teacher-forced held-out transition prediction survives heavy input ablation
+- `opcode_step_plus_sizes` remains alive:
+  - `opcode=0.4190`
+  - `step=0.4017`
+- `opcode_step_only` degrades but does not collapse:
+  - `opcode=0.3927`
+  - `step=0.3747`
+- semi-open-loop rollout is not stable:
+  - `full_trace_exact_fraction=0.0`
+  - `first_failure_step_mean=1.0`
+
+Conclusion:
+
+- the current controller is not yet a stable learned executor
+- it is better described as a held-out execution-dynamics model whose one-step
+  generalization is real, but whose open-loop rollout stability is still poor
+
+Second verifier-compatible export result:
+
+- [trace-pretrain-export-mixed-memops-verify-v2.json](/home/zaytor/transformer_research/parameter-golf/research/iterations/generated/20260405_031502_mlx-hardmax-trace-pretrain-export-memops-verify-v2/trace_execution_verification/trace-pretrain-export-mixed-memops-verify-v2.json)
+
+What changed:
+
+- explicit `stack_depth` and `env_size` prediction heads
+
+What improved:
+
+- teacher-forced held-out transition prediction improved sharply
+  - baseline `opcode` rose from `0.4125` to `0.6238`
+  - baseline `step` rose from `0.4362` to `0.6664`
+  - new size accuracies landed at:
+    - `stack_depth=0.6740`
+    - `env_size=0.6252`
+
+What did not improve enough:
+
+- open-loop rollout still has `first_failure_step_mean=1.0`
+  even when sizes are predicted and carried
+
+So the bottleneck has narrowed:
+
+- it is no longer “the model never learned machine-state size”
+- it is now “the model is still not robust under self-fed predicted traces”
+
+That makes the next execution-verification follow-on straightforward:
+
+- short-horizon rollout-consistency / anti-drift training
+
 ## Active LM transfer sweep
 
 The current live transfer sweep is:
@@ -777,8 +854,13 @@ This branch is staged but intentionally not launched yet.
 
 Reason:
 
-- the active exploit branch is still the freeze-window refinement around `state_book + freeze200`
-- the new attention-shaping branch should be the next architecture rollout once the current transfer sweep settles
+- the best exact transfer anchor is now `state_book + freeze300`
+- the next branch is no longer more freeze tuning first
+- it is:
+  - H15a naive anti-collapse as the baseline read for that family
+  - H15b `SimVQ + NextLat` is now a closed negative result in its current form
+  - H16 residual feedback / error-memory is the next active principal variation
+  - with H2 attention-shaping still the first conditioning branch to scale if it wins
 
 ## New supervision branches
 
@@ -816,6 +898,11 @@ Question:
 
 - does train-time multi-horizon supervision provide enough extra supervision bits to improve on top of `state_book + freeze300`?
 
+Updated read:
+
+- the live H12 smoke is now best treated as a probe
+- the next real H12 build should be register/curriculum supervision, not more naive small-model horizon heads
+
 ### H13. Distribution-shape supervision
 
 Branch note:
@@ -829,6 +916,82 @@ Live smoke:
 Question:
 
 - does EMA-teacher KL on the full token distribution beat plain one-hot next-token supervision on the same anchor?
+
+Updated read:
+
+- the live EMA-KL smoke is now H13a
+- the next real H13 follow-on should be calibrated uncertainty distillation, not plain sharp KL alone
+
+### H15. Statebook anti-collapse on the `freeze300` anchor
+
+Branch note:
+
+- [20260405_hardmax_statebook_anticollapse_leg.md](/home/zaytor/transformer_research/parameter-golf/research/project_wide/20260405_hardmax_statebook_anticollapse_leg.md)
+
+Generated sweep:
+
+- [manifest.json](/home/zaytor/transformer_research/parameter-golf/research/iterations/generated/20260405_011602_mlx-hardmax-statebook-anticollapse-freeze300-smoke/manifest.json)
+- [README.md](/home/zaytor/transformer_research/parameter-golf/research/iterations/generated/20260405_011602_mlx-hardmax-statebook-anticollapse-freeze300-smoke/README.md)
+
+Reason:
+
+- the freeze-family backfill now says the transfer object is real, but the live discrete controller is still almost fully collapsed
+- so the next branch is no longer “more transfer archaeology”
+- it is explicit anti-collapse training on top of the best exact anchor
+
+Updated branch split:
+
+- H15a naive anti-collapse
+- H15b `SimVQ + NextLat`
+
+The purpose of H15a is to test whether occupancy / commitment / transition pressure alone is enough.
+
+The purpose of H15b is to attack the deeper bottleneck directly:
+
+- codebook optimization
+- next-state latent dynamics
+
+New trainer knobs in [train_gpt_mlx.py](/home/zaytor/transformer_research/parameter-golf/train_gpt_mlx.py):
+
+- `HARDMAX_STRUCT_STATE_USAGE_ENTROPY_WEIGHT`
+- `HARDMAX_STRUCT_STATE_COMMIT_WEIGHT`
+- `HARDMAX_STRUCT_TRANSITION_BOUNDARY_WEIGHT`
+- `HARDMAX_STRUCT_SIMVQ_ENABLED`
+- `HARDMAX_STRUCT_NEXTLAT_WEIGHT`
+
+First arms:
+
+1. `freeze300-baseline`
+2. `freeze300-usageH010`
+3. `freeze300-commit010`
+4. `freeze300-transbnd020`
+5. `freeze300-usageH010-commit010`
+
+H15b smoke is now live:
+
+- [manifest.json](/home/zaytor/transformer_research/parameter-golf/research/iterations/generated/20260405_042706_mlx-hardmax-statebook-simvq-nextlat-freeze300-smoke/manifest.json)
+- [README.md](/home/zaytor/transformer_research/parameter-golf/research/iterations/generated/20260405_042706_mlx-hardmax-statebook-simvq-nextlat-freeze300-smoke/README.md)
+
+Arms:
+
+1. `freeze300-baseline`
+2. `freeze300-simvq`
+3. `freeze300-simvq-usageH010-commit010`
+4. `freeze300-simvq-nextlat005`
+5. `freeze300-simvq-usageH010-commit010-nextlat005`
+
+Interpretation target:
+
+- does shared codebook reparameterization alone revive the transferred state vocabulary?
+- does explicit next-state prediction on the hardmax path create a richer controller without giving back the `freeze300` exact gain?
+
+Current read:
+
+- no
+- the current H15b implementation is a negative result and should not be
+  scaled as-is
+- the next active BPB branch is now H16 residual feedback / error-memory on
+  the same `freeze300` anchor
 
 ## Queue infrastructure upgrades
 
@@ -871,3 +1034,87 @@ Implication:
 
 - new branches should land with machine-readable status/finals much earlier
 - and should depend less on manual queue-session note-taking
+
+## Execution Verification Follow-On
+
+The execution-verification read is now concrete:
+
+- held-out transition prediction is real
+- open-loop rollout still fails at step `1.0`
+- predicting `stack_depth` / `env_size` improved one-step dynamics
+- but did not fix self-fed drift
+
+So the next execution branch is no longer more heads; it is rollout robustness.
+
+Implemented follow-on:
+
+- [train_hardmax_execution_trace.py](/home/zaytor/transformer_research/parameter-golf/tools/train_hardmax_execution_trace.py)
+  - now supports short-horizon rollout-consistency loss on self-fed predicted traces
+- [execution_trace_verifier.py](/home/zaytor/transformer_research/parameter-golf/execution_trace_verifier.py)
+  - now provides the shared rollout input construction used by both training and verification
+
+Queued controlled comparison:
+
+- spec:
+  - [20260404_223013_mlx-hardmax-trace-pretrain-export-memops-rollout-verify-v3.json](/home/zaytor/transformer_research/parameter-golf/research/iterations/generated/20260404_223013_mlx-hardmax-trace-pretrain-export-memops-rollout-verify-v3.json)
+- generated bundle:
+  - [manifest.json](/home/zaytor/transformer_research/parameter-golf/research/iterations/generated/20260405_033054_mlx-hardmax-trace-pretrain-export-memops-rollout-verify-v3/manifest.json)
+
+Arms:
+
+1. `baseline-v3`
+2. `rollout-h2w025-v3`
+
+The success criterion is simple:
+
+- if rollout verification moves `first_failure_step_mean` materially above `1.0`,
+  the controller has started to learn self-fed stability rather than only
+  teacher-forced transition prediction
+
+Result from the first controlled anti-drift branch:
+
+- iteration:
+  - [manifest.json](/home/zaytor/transformer_research/parameter-golf/research/iterations/generated/20260405_033054_mlx-hardmax-trace-pretrain-export-memops-rollout-verify-v3/manifest.json)
+- verification:
+  - [baseline](/home/zaytor/transformer_research/parameter-golf/research/iterations/generated/20260405_033054_mlx-hardmax-trace-pretrain-export-memops-rollout-verify-v3/trace_execution_verification/trace-pretrain-export-mixed-memops-baseline-v3.json)
+  - [rollout](/home/zaytor/transformer_research/parameter-golf/research/iterations/generated/20260405_033054_mlx-hardmax-trace-pretrain-export-memops-rollout-verify-v3/trace_execution_verification/trace-pretrain-export-mixed-memops-rollout-h2w025-v3.json)
+
+Read:
+
+- `first_failure_step_mean` stayed at `1.0`
+- naive rollout-consistency did **not** produce stable self-fed execution
+- teacher-forced one-step dynamics regressed materially under the rollout arm
+
+So the right update is:
+
+- the anti-drift branch remains active
+- but `predicted_all` 2-step consistency at weight `0.25` is the wrong shape
+- next attempt should be lighter / mixed / scheduled-sampling-style, not a larger version of the same loss
+
+Current queued follow-on:
+
+- spec:
+  - [20260404_225508_mlx-hardmax-trace-pretrain-export-memops-schedmix-verify-v4.json](/home/zaytor/transformer_research/parameter-golf/research/iterations/generated/20260404_225508_mlx-hardmax-trace-pretrain-export-memops-schedmix-verify-v4.json)
+- generated bundle:
+  - [manifest.json](/home/zaytor/transformer_research/parameter-golf/research/iterations/generated/20260405_035543_mlx-hardmax-trace-pretrain-export-memops-schedmix-verify-v4/manifest.json)
+
+Branch shape:
+
+1. baseline-v4
+2. schedmix-p010-opstepsize-v4
+
+The new mechanism is scheduled-sampling-style input mixing on a small fraction
+of future opcode/step/size inputs, while keeping the main objective teacher
+forced.
+
+Planning update:
+
+- the execution lane has already answered its main question:
+  teacher-forced held-out execution dynamics are real
+- autonomous rollout robustness is now secondary future work, not the main
+  project bottleneck
+- v4 stays live as a light opportunistic follow-on, but the main priority
+  shifts back to:
+  - SimVQ + NextLat anti-collapse
+  - residual mirror / error-memory
+  - register/curriculum H12 reboot

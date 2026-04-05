@@ -29,6 +29,14 @@ class ExecutionTracePretrainDatasetTests(unittest.TestCase):
             int(encoded.target_next_step_type_ids[0]),
             vocab.step_type_to_id[str(example["trace"][1]["step_type"])],
         )
+        self.assertEqual(
+            int(encoded.target_next_stack_depth_ids[0]),
+            min(len(example["trace"][1].get("stack_after", [])), vocab.max_stack_bucket - 1),
+        )
+        self.assertEqual(
+            int(encoded.target_next_env_size_ids[0]),
+            min(len(example["trace"][1].get("env_after", {})), vocab.max_env_bucket - 1),
+        )
 
     def test_encode_example_tracks_memory_vars(self) -> None:
         builder = ExampleBuilder(rng=__import__("random").Random(9), config=GenerationConfig(seed=9, task_family="loop"))
@@ -54,6 +62,8 @@ class ExecutionTracePretrainDatasetTests(unittest.TestCase):
         self.assertEqual(batch["target_next_write_var_ids"].shape, batch["opcode_ids"].shape)
         self.assertEqual(batch["target_next_read_count_ids"].shape, batch["opcode_ids"].shape)
         self.assertEqual(batch["target_next_write_count_ids"].shape, batch["opcode_ids"].shape)
+        self.assertEqual(batch["target_next_stack_depth_ids"].shape, batch["opcode_ids"].shape)
+        self.assertEqual(batch["target_next_env_size_ids"].shape, batch["opcode_ids"].shape)
 
 
 if __name__ == "__main__":

@@ -16,6 +16,26 @@ The only JEPA-derived feature that currently looks worth promoting is:
 - `SIDECAR_SIGREG_WEIGHT=0.0`
 - `SIDECAR_SPHERICAL_WEIGHT=0.0`
 
+## Current update
+
+The modeling read has shifted slightly since this handoff:
+
+- `segment-prev-read` still looks like the right architectural object
+- token-rate persistent carry is still dead
+- but the next useful branch is no longer "more shared JEPA latent work"
+
+The next branch should be:
+
+- detached boundary routing
+- boundary enrichment / confidence alignment metrics
+- boundary placement driven by predictive difficulty or uncertainty
+
+That means the follow-on is:
+
+- keep the slow segment-clock read path
+- stop sharing one latent between "what to write" and "where to cut"
+- use uncertainty or surprisal to decide where extra segment structure is worth paying for
+
 This is implemented in [train_gpt_mlx_segmentlong.py](/home/zaytor/transformer_research/parameter-golf/train_gpt_mlx_segmentlong.py).
 
 The clean exact result matrix is packaged in:

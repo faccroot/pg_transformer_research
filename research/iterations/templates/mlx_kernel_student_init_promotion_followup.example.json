@@ -1,0 +1,74 @@
+{
+  "iteration_id": "iter_YYYYMMDD_HHMMSS_kernel_student_init_promotion_followup",
+  "sweep_slug": "mlx-kernel-student-init-promotion-followup",
+  "dispatch_mode": "queue",
+  "queue_parallelism": 1,
+  "queue_retry_attempts": 2,
+  "wrapper_script": "/home/zaytor/transformer_research/parameter-golf/run_train_gpt_mlx_config.py",
+  "script": "/home/zaytor/transformer_research/parameter-golf/train_gpt_mlx.py",
+  "support_files": [
+    "/home/zaytor/transformer_research/parameter-golf/train_gpt_mlx.py",
+    "/home/zaytor/transformer_research/parameter-golf/logic_register_mlx.py",
+    "/home/zaytor/transformer_research/parameter-golf/early_exit_aux.py",
+    "/home/zaytor/transformer_research/parameter-golf/text_prosody_features.py",
+    "/home/zaytor/transformer_research/parameter-golf/structural_branching.py",
+    "/home/zaytor/transformer_research/parameter-golf/sequential_data_filter.py",
+    "/home/zaytor/transformer_research/parameter-golf/token_category_weighting.py",
+    "/home/zaytor/transformer_research/parameter-golf/token_context_weighting.py",
+    "/home/zaytor/transformer_research/parameter-golf/replay_signal_runtime.py",
+    "/home/zaytor/transformer_research/parameter-golf/residual_feedback.py",
+    "/home/zaytor/transformer_research/parameter-golf/snapshot_signal_runtime.py",
+    "/home/zaytor/transformer_research/parameter-golf/teacher_signal_runtime.py",
+    "/home/zaytor/transformer_research/parameter-golf/curriculum_runtime.py",
+    "/home/zaytor/transformer_research/parameter-golf/curriculum.py",
+    "/home/zaytor/transformer_research/parameter-golf/apollo_mlx.py",
+    "/home/zaytor/transformer_research/parameter-golf/ternary_quant_mlx.py",
+    "/home/zaytor/transformer_research/parameter-golf/turbo_quant_mlx.py",
+    "/home/zaytor/transformer_research/parameter-golf/data/tokenizers/fineweb_1024_bpe.model",
+    "/home/zaytor/transformer_research/parameter-golf/research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_olmo_product_tuning_v1/ce030_e12_lr5e4/best_kernel_teacher_student.npz"
+  ],
+  "base_env": {
+    "DATA_PATH": "~/transformer_research/parameter-golf/data/datasets/fineweb10B_sp1024",
+    "TOKENIZER_PATH": "fineweb_1024_bpe.model",
+    "TRANSFER_INIT_PATH": "best_kernel_teacher_student.npz",
+    "TRANSFER_INIT_PREFIX": "backbone.",
+    "VOCAB_SIZE": 1024,
+    "TRAIN_BATCH_TOKENS": 8192,
+    "TRAIN_LOG_EVERY": 100,
+    "VAL_BATCH_SIZE": 131072,
+    "VAL_LOSS_EVERY": 200,
+    "VAL_MAX_SEQS": 0,
+    "ITERATIONS": 1600,
+    "MAX_WALLCLOCK_SECONDS": 0,
+    "WARMUP_STEPS": 0,
+    "WARMDOWN_FRACTION": 0.0,
+    "MLX_COMPILE": 0,
+    "EMA_ENABLED": 0,
+    "MODEL_DIM": 128,
+    "NUM_HEADS": 8,
+    "NUM_KV_HEADS": 4,
+    "NUM_LAYERS": 2,
+    "NUM_LAYER_TEMPLATES": 2,
+    "MLP_MULT": 2,
+    "TIE_EMBEDDINGS": 0,
+    "OUT_DIR": "logs"
+  },
+  "runs": [
+    {
+      "slug": "r2_transfer_reset_head",
+      "notes": "Transfer backbone but keep the LM head random.",
+      "env": {
+        "RUN_ID": "mlx-kernel-student-init-promotion-followup_r2-transfer-reset-head",
+        "TRANSFER_INIT_RESET_LM_HEAD": 1
+      }
+    },
+    {
+      "slug": "r3_transfer_freeze32",
+      "notes": "Transfer backbone and freeze transferred tensors for the first 32 steps.",
+      "env": {
+        "RUN_ID": "mlx-kernel-student-init-promotion-followup_r3-transfer-freeze32",
+        "TRANSFER_INIT_FREEZE_STEPS": 32
+      }
+    }
+  ]
+}

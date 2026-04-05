@@ -325,14 +325,28 @@ class GPTSegmentLong(sidecar.GPTJEPASidecar):
         pred_weight: float | None = None,
         sigreg_weight: float | None = None,
         spherical_weight: float | None = None,
-    ) -> tuple[mx.array, mx.array, mx.array, mx.array, mx.array, mx.array]:
+    ) -> tuple[mx.array, mx.array, mx.array, mx.array, mx.array, mx.array, mx.array]:
         pred_weight = self.sidecar_pred_weight if pred_weight is None else pred_weight
         sigreg_weight = self.sidecar_sigreg_weight if sigreg_weight is None else sigreg_weight
         spherical_weight = self.sidecar_spherical_weight if spherical_weight is None else spherical_weight
-        final_hidden, _tap_hidden, aux = self.forward_with_sidecar_hidden_aux(
-            input_ids,
-            initial_sidecar_state=initial_sidecar_state,
+        effective_early_exit_weight = float(self._early_exit_aux_weight)
+        capture_layers = (
+            (self._early_exit_layer_index,)
+            if bool(self.early_exit_heads) and effective_early_exit_weight > 0.0
+            else ()
         )
+        if capture_layers:
+            final_hidden, captured, aux = self.forward_hidden_with_aux(
+                input_ids,
+                capture_layers=capture_layers,
+                initial_sidecar_state=initial_sidecar_state,
+            )
+        else:
+            final_hidden, _tap_hidden, aux = self.forward_with_sidecar_hidden_aux(
+                input_ids,
+                initial_sidecar_state=initial_sidecar_state,
+            )
+            captured = {}
         ce_loss = self.token_ce_from_hidden(final_hidden, target_ids)
         zero = mx.array(0.0, dtype=mx.float32)
         if aux_scale <= 0.0:
@@ -341,12 +355,17 @@ class GPTSegmentLong(sidecar.GPTJEPASidecar):
             side_states = aux["sidecar_states"]
             assert side_states is not None
             pred_loss, sigreg_loss, spherical_loss = self.sidecar_terms_from_states(side_states)
+        early_exit_loss = zero
+        if bool(self.early_exit_heads) and effective_early_exit_weight > 0.0:
+            early_exit_hidden = captured.get(self._early_exit_layer_index)
+            if early_exit_hidden is not None:
+                early_exit_loss = self.early_exit_aux_loss(early_exit_hidden, target_ids)
         total = ce_loss + mx.array(aux_scale, dtype=mx.float32) * (
             pred_weight * pred_loss + sigreg_weight * sigreg_loss + spherical_weight * spherical_loss
-        )
+        ) + effective_early_exit_weight * early_exit_loss
         final_state = aux["final_sidecar_state"]
         assert final_state is not None
-        return total, ce_loss, pred_loss, sigreg_loss, spherical_loss, mx.stop_gradient(final_state)
+        return total, ce_loss, pred_loss, sigreg_loss, spherical_loss, early_exit_loss, mx.stop_gradient(final_state)
 
     def ce_loss_streaming(
         self,
@@ -658,6 +677,12 @@ def main() -> None:
         f"loss_weights:ce=1.0 sidecar_pred:{args.sidecar_pred_weight} "
         f"sigreg:{args.sidecar_sigreg_weight} spherical:{args.sidecar_spherical_weight}"
     )
+    if args.early_exit_aux_weight > 0.0:
+        log(
+            f"early_exit:layer:{base.resolve_early_exit_layer_index(args.early_exit_layer_index, args.num_layers)} "
+            f"horizons:{args.early_exit_horizons} aux_weight:{args.early_exit_aux_weight:.3f} "
+            f"head_init_std:{args.early_exit_head_init_std:.4f}"
+        )
     log(
         f"iterations:{args.iterations} train_batch_tokens:{args.train_batch_tokens} grad_accum_steps:{args.grad_accum_steps} "
         f"microbatch_tokens:{args.microbatch_tokens} microbatch_batch_size:{batch_seqs} "
@@ -953,12 +978,13 @@ def main() -> None:
                     spherical_weight,
                 )
                 mx.eval(*metrics)
-                _, ce_metric, pred_metric, sig_metric, sph_metric, _ = metrics
+                _, ce_metric, pred_metric, sig_metric, sph_metric, early_exit_metric, _ = metrics
                 extra = (
                     f" ce:{float(ce_metric.item()):.4f}"
                     f" sidecar_pred:{float(pred_metric.item()):.4f}"
                     f" sidecar_sigreg:{float(sig_metric.item()):.4f}"
                     f" sidecar_spherical:{float(sph_metric.item()):.4f}"
+                    f" early_exit:{float(early_exit_metric.item()):.4f}"
                 )
             log(
                 f"step:{step}/{args.iterations} train_loss:{train_loss_value:.4f} "

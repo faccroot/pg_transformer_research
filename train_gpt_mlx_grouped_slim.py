@@ -146,6 +146,25 @@ def validate_supported_features(args: Hyperparameters) -> None:
         )
 
 
+def total_objective_matches_ce(args: Hyperparameters, model: base.GPT) -> bool:
+    """Return True when the slim objective reduces to pure CE.
+
+    This is the compile-safe fast path for the current-size plain/Turbo lane.
+    We only take it when there are no static auxiliaries that contribute to
+    `loss_terms()[0]`.
+    """
+
+    if args.early_exit_aux_weight > 0.0 or args.early_exit_branch_draft_enabled:
+        return False
+    if model.has_prosody_aux():
+        return False
+    if model.logic_sidecar is not None or model.hardmax_structural_controller is not None:
+        return False
+    if args.polarity_seed_weight != 0.0 or args.polarity_sparse_weight != 0.0 or args.polarity_smooth_weight != 0.0:
+        return False
+    return True
+
+
 def main() -> None:
     args = Hyperparameters()
     validate_supported_features(args)
@@ -207,12 +226,33 @@ def main() -> None:
     model.set_turbo_qat(False, 0.0)
     opt = base.SplitOptimizers(model, args)
     quant_eval_model: base.GPT | None = None
+    objective_matches_ce = total_objective_matches_ce(args, model)
 
     compiled = base.resolve_mlx_compile(args.mlx_compile, args.turbo_qat)
     uses_logic = model.logic_sidecar is not None or model.hardmax_structural_controller is not None
     if compiled and model.hardmax_structural_controller is not None:
         log("mlx_compile:disable reason:hardmax_structural_controller_python_loop")
         compiled = False
+
+    if uses_logic:
+        objective_name = "ce_loss_fastpath" if objective_matches_ce else "loss_terms_total"
+        base_loss_fn = (
+            (lambda x, y, operator_codes: model.ce_loss(x, y, operator_codes))
+            if objective_matches_ce
+            else (lambda x, y, operator_codes: model.loss_terms(x, y, operator_codes)[0])
+        )
+    else:
+        objective_name = "ce_loss_fastpath" if objective_matches_ce else "loss_terms_total"
+        base_loss_fn = (
+            (lambda x, y: model.ce_loss(x, y))
+            if objective_matches_ce
+            else (lambda x, y: model.loss_terms(x, y)[0])
+        )
+
+    if compiled and not objective_matches_ce:
+        log("mlx_compile:disable reason:loss_terms_total_not_compile_safe")
+        compiled = False
+
     if compiled:
         if uses_logic:
             compiled_ce_loss_impl = mx.compile(
@@ -221,7 +261,7 @@ def main() -> None:
                 outputs=model.state,
             )
             compiled_loss_and_grad_impl = mx.compile(
-                nn.value_and_grad(model, lambda x, y, operator_codes: model.loss_terms(x, y, operator_codes)[0]),
+                nn.value_and_grad(model, base_loss_fn),
                 inputs=model.state,
                 outputs=model.state,
             )
@@ -238,7 +278,7 @@ def main() -> None:
                 outputs=model.state,
             )
             compiled_loss_and_grad_impl = mx.compile(
-                nn.value_and_grad(model, lambda x, y: model.loss_terms(x, y)[0]),
+                nn.value_and_grad(model, base_loss_fn),
                 inputs=model.state,
                 outputs=model.state,
             )
@@ -253,7 +293,7 @@ def main() -> None:
             compiled_ce_loss = lambda x, y, operator_codes=None: model.ce_loss(x, y, operator_codes)
             compiled_loss_and_grad_impl = nn.value_and_grad(
                 model,
-                lambda x, y, operator_codes: model.loss_terms(x, y, operator_codes)[0],
+                base_loss_fn,
             )
             compiled_loss_and_grad = (
                 lambda x, y, operator_codes=None, token_weights=None, teacher_logits=None, teacher_hidden=None,
@@ -262,7 +302,7 @@ def main() -> None:
             )
         else:
             compiled_ce_loss = lambda x, y, operator_codes=None: model.ce_loss(x, y)
-            compiled_loss_and_grad_impl = nn.value_and_grad(model, lambda x, y: model.loss_terms(x, y)[0])
+            compiled_loss_and_grad_impl = nn.value_and_grad(model, base_loss_fn)
             compiled_loss_and_grad = (
                 lambda x, y, operator_codes=None, token_weights=None, teacher_logits=None, teacher_hidden=None,
                 branch_plans=None, structural_branching_cfg_override=None, early_exit_aux_weight_override=None:
@@ -292,7 +332,7 @@ def main() -> None:
     )
     log(
         f"grouped_slim:streams:{num_streams} grouped_active:{int(not args.curriculum_enabled)} "
-        f"train_objective:loss_terms_total"
+        f"train_objective:{objective_name}"
     )
     log(
         f"iterations:{args.iterations} train_batch_tokens:{args.train_batch_tokens} grad_accum_steps:{args.grad_accum_steps} "
@@ -415,11 +455,11 @@ def main() -> None:
                     branch_plans=None, structural_branching_cfg_override=None, early_exit_aux_weight_override=None:
                     nn.value_and_grad(
                         model,
-                        lambda x_inner, y_inner, operator_codes_inner: model.loss_terms(
+                        lambda x_inner, y_inner, operator_codes_inner: base_loss_fn(
                             x_inner,
                             y_inner,
                             operator_codes_inner,
-                        )[0] + qat_lambda * model.turbo_regularizer(),
+                        ) + qat_lambda * model.turbo_regularizer(),
                     )(x, y, operator_codes)
                 )
             else:
@@ -428,7 +468,7 @@ def main() -> None:
                     branch_plans=None, structural_branching_cfg_override=None, early_exit_aux_weight_override=None:
                     nn.value_and_grad(
                         model,
-                        lambda x_inner, y_inner: model.loss_terms(x_inner, y_inner)[0] + qat_lambda * model.turbo_regularizer(),
+                        lambda x_inner, y_inner: base_loss_fn(x_inner, y_inner) + qat_lambda * model.turbo_regularizer(),
                     )(x, y)
                 )
         else:

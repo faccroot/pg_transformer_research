@@ -16,6 +16,7 @@ without relying on a drifting recurrent carry state.
 """
 from __future__ import annotations
 
+import inspect
 import os
 import sys
 import time
@@ -46,6 +47,11 @@ class Hyperparameters(base.Hyperparameters):
     harmonic_pred_offset: int = int(os.environ.get("HARM_PRED_OFFSET", "1"))
     harmonic_read_init_std: float = float(os.environ.get("HARM_READ_INIT_STD", "1e-3"))
     harmonic_pred_init_std: float = float(os.environ.get("HARM_PRED_INIT_STD", "1e-4"))
+    harmonic_value_rmsnorm: bool = bool(int(os.environ.get("HARM_VALUE_RMSNORM", "0")))
+    harmonic_chord_norm_weight: float = float(os.environ.get("HARM_CHORD_NORM_WEIGHT", "0.0"))
+    harmonic_chord_norm_target: float = float(os.environ.get("HARM_CHORD_NORM_TARGET", "8.0"))
+    harmonic_adjacent_cos_weight: float = float(os.environ.get("HARM_ADJACENT_COS_WEIGHT", "0.0"))
+    harmonic_adjacent_cos_margin: float = float(os.environ.get("HARM_ADJACENT_COS_MARGIN", "0.95"))
     out_dir: str = os.environ.get("OUT_DIR", "logs")
 
 
@@ -165,6 +171,11 @@ class GPTHarmonic(base.GPT):
         harmonic_jepa_weight: float,
         harmonic_read_init_std: float,
         harmonic_pred_init_std: float,
+        harmonic_value_rmsnorm: bool,
+        harmonic_chord_norm_weight: float,
+        harmonic_chord_norm_target: float,
+        harmonic_adjacent_cos_weight: float,
+        harmonic_adjacent_cos_margin: float,
     ):
         super().__init__(
             vocab_size=vocab_size,
@@ -235,6 +246,8 @@ class GPTHarmonic(base.GPT):
             raise ValueError(f"HARM_BANK_SIZE must be >= 0, got {harmonic_bank_size}")
         if harmonic_read_topk < 0:
             raise ValueError(f"HARM_READ_TOPK must be >= 0, got {harmonic_read_topk}")
+        if harmonic_chord_norm_target <= 0.0:
+            raise ValueError(f"HARM_CHORD_NORM_TARGET must be > 0, got {harmonic_chord_norm_target}")
         self.harmonic_patch_len = int(harmonic_patch_len)
         self.harmonic_tap_layer_index = self._resolve_tap_layer(harmonic_tap_layer)
         self.harmonic_chord_dim = int(harmonic_chord_dim)
@@ -246,6 +259,11 @@ class GPTHarmonic(base.GPT):
         self.harmonic_enable_read = bool(harmonic_enable_read)
         self.harmonic_pred_offset = int(harmonic_pred_offset)
         self.harmonic_jepa_weight = float(harmonic_jepa_weight)
+        self.harmonic_value_rmsnorm = bool(harmonic_value_rmsnorm)
+        self.harmonic_chord_norm_weight = float(harmonic_chord_norm_weight)
+        self.harmonic_chord_norm_target = float(harmonic_chord_norm_target)
+        self.harmonic_adjacent_cos_weight = float(harmonic_adjacent_cos_weight)
+        self.harmonic_adjacent_cos_margin = float(harmonic_adjacent_cos_margin)
 
         self.harmonic_write_proj = base.CastedLinear(dim, harmonic_chord_dim)
         self.harmonic_write_proj.weight = (
@@ -337,7 +355,7 @@ class GPTHarmonic(base.GPT):
         self,
         tap_hidden: mx.array,
         query_hidden: mx.array,
-    ) -> tuple[mx.array, mx.array, mx.array, mx.array, mx.array]:
+    ) -> tuple[mx.array, mx.array, mx.array, mx.array, mx.array, mx.array, mx.array, mx.array, mx.array, mx.array]:
         write_patch_hidden = self._patch_pool_hidden(mx.stop_gradient(self.strip_registers(tap_hidden)))
         query_patch_hidden = self._patch_pool_hidden(self.strip_registers(query_hidden))
         if write_patch_hidden.shape[1] <= 0:
@@ -356,7 +374,21 @@ class GPTHarmonic(base.GPT):
             empty_chords = mx.zeros((batch, 0, chord_dim), dtype=base.COMPUTE_DTYPE)
             empty_mask = mx.zeros((batch, 0), dtype=mx.float32)
             zeros = mx.zeros((batch,), dtype=mx.float32)
-            return empty_patch_reads, empty_chords, empty_mask, zeros, zeros
+            empty_patch_flags = mx.zeros((batch, 0), dtype=mx.float32)
+            empty_segment_ids = mx.zeros((batch, 0), dtype=mx.int32)
+            empty_flux = mx.zeros((batch, 0), dtype=mx.float32)
+            return (
+                empty_patch_reads,
+                empty_chords,
+                empty_mask,
+                zeros,
+                zeros,
+                empty_patch_flags,
+                empty_segment_ids,
+                empty_flux,
+                empty_patch_flags,
+                empty_patch_flags,
+            )
 
         flux_source = base.rms_norm(write_patch_hidden).astype(base.COMPUTE_DTYPE)
         flux_unit = auxlib.l2_normalize(flux_source)
@@ -376,6 +408,7 @@ class GPTHarmonic(base.GPT):
 
         patch_positions = mx.arange(num_patches, dtype=mx.int32)
         periodic_boundary = ((patch_positions % self.harmonic_max_patches_per_chord) == 0)[None, :]
+        periodic_boundary = mx.broadcast_to(periodic_boundary, flux.shape)
         threshold_boundary = flux >= mx.array(self.harmonic_boundary_threshold, dtype=mx.float32)
         if num_patches > 2:
             prev_flux = mx.concatenate(
@@ -405,6 +438,7 @@ class GPTHarmonic(base.GPT):
         chord_mask = chord_counts > 0.0
         chord_sums = mx.matmul(mx.swapaxes(segment_onehot, 1, 2), write_patches.astype(base.COMPUTE_DTYPE))
         chord_states = chord_sums / mx.maximum(chord_counts[:, :, None].astype(base.COMPUTE_DTYPE), 1.0)
+        read_values = base.rms_norm(chord_states).astype(base.COMPUTE_DTYPE) if self.harmonic_value_rmsnorm else chord_states.astype(base.COMPUTE_DTYPE)
 
         if self.harmonic_bank_size > 0 and num_patches > self.harmonic_bank_size:
             chord_count_per_batch = mx.sum(chord_mask.astype(mx.int32), axis=1)
@@ -425,7 +459,7 @@ class GPTHarmonic(base.GPT):
             weights = mx.softmax(masked_scores, axis=-1).astype(base.COMPUTE_DTYPE) * prev_mask_f.astype(base.COMPUTE_DTYPE)
             weights_sum = mx.sum(weights, axis=-1, keepdims=True)
             weights = weights / mx.maximum(weights_sum, 1e-6)
-            patch_reads_out = mx.matmul(weights, mx.stop_gradient(chord_states).astype(base.COMPUTE_DTYPE))
+            patch_reads_out = mx.matmul(weights, mx.stop_gradient(read_values).astype(base.COMPUTE_DTYPE))
         else:
             patch_reads_out = mx.zeros((batch, num_patches, chord_dim), dtype=base.COMPUTE_DTYPE)
 
@@ -435,7 +469,18 @@ class GPTHarmonic(base.GPT):
         else:
             flux_mean_arr = mx.zeros((batch,), dtype=mx.float32)
         chord_count_arr = mx.sum(chord_mask.astype(mx.float32), axis=1)
-        return patch_reads_out, chord_states.astype(base.COMPUTE_DTYPE), chord_mask.astype(mx.float32), chord_count_arr, flux_mean_arr
+        return (
+            patch_reads_out,
+            chord_states.astype(base.COMPUTE_DTYPE),
+            chord_mask.astype(mx.float32),
+            chord_count_arr,
+            flux_mean_arr,
+            boundary_flags.astype(mx.float32),
+            segment_ids.astype(mx.int32),
+            flux.astype(mx.float32),
+            periodic_boundary.astype(mx.float32),
+            threshold_boundary.astype(mx.float32),
+        )
 
     def harmonic_token_condition(
         self,
@@ -472,6 +517,34 @@ class GPTHarmonic(base.GPT):
         denom = mx.maximum(mx.sum(pair_mask.astype(mx.float32)), mx.array(1.0, dtype=mx.float32))
         return mx.sum(cosine_err * pair_mask.astype(mx.float32)) / denom
 
+    def harmonic_norm_penalty(
+        self,
+        chord_states: mx.array,
+        chord_mask: mx.array,
+    ) -> mx.array:
+        if self.harmonic_chord_norm_weight <= 0.0:
+            return mx.array(0.0, dtype=mx.float32)
+        norms = mx.sqrt(mx.maximum(mx.sum(chord_states.astype(mx.float32) ** 2, axis=-1), 1e-8))
+        excess = mx.maximum(norms - mx.array(self.harmonic_chord_norm_target, dtype=mx.float32), 0.0)
+        mask = chord_mask.astype(mx.float32)
+        denom = mx.maximum(mx.sum(mask), mx.array(1.0, dtype=mx.float32))
+        return mx.sum((excess ** 2) * mask) / denom
+
+    def harmonic_adjacent_cos_penalty(
+        self,
+        chord_states: mx.array,
+        chord_mask: mx.array,
+    ) -> mx.array:
+        if self.harmonic_adjacent_cos_weight <= 0.0 or chord_states.shape[1] <= self.harmonic_pred_offset:
+            return mx.array(0.0, dtype=mx.float32)
+        source = auxlib.l2_normalize(chord_states[:, :-self.harmonic_pred_offset, :].astype(base.COMPUTE_DTYPE))
+        target = auxlib.l2_normalize(chord_states[:, self.harmonic_pred_offset :, :].astype(base.COMPUTE_DTYPE))
+        pair_mask = chord_mask[:, :-self.harmonic_pred_offset] * chord_mask[:, self.harmonic_pred_offset :]
+        cosine = mx.sum(source.astype(mx.float32) * target.astype(mx.float32), axis=-1)
+        excess = mx.maximum(cosine - mx.array(self.harmonic_adjacent_cos_margin, dtype=mx.float32), 0.0)
+        denom = mx.maximum(mx.sum(pair_mask.astype(mx.float32)), mx.array(1.0, dtype=mx.float32))
+        return mx.sum(excess * pair_mask.astype(mx.float32)) / denom
+
     def forward_hidden_with_aux(
         self,
         input_ids: mx.array,
@@ -498,7 +571,18 @@ class GPTHarmonic(base.GPT):
 
         if tap_hidden is None:
             tap_hidden = x
-        patch_reads, chord_states, chord_mask, chord_counts, flux_means = self.harmonic_structure_from_hidden(
+        (
+            patch_reads,
+            chord_states,
+            chord_mask,
+            chord_counts,
+            flux_means,
+            boundary_flags,
+            segment_ids,
+            flux,
+            periodic_boundary_flags,
+            threshold_boundary_flags,
+        ) = self.harmonic_structure_from_hidden(
             tap_hidden,
             x,
         )
@@ -521,6 +605,11 @@ class GPTHarmonic(base.GPT):
             "harmonic_token_reads": harmonic_tokens,
             "harmonic_chord_counts": chord_counts,
             "harmonic_flux_means": flux_means,
+            "harmonic_boundary_flags": boundary_flags,
+            "harmonic_segment_ids": segment_ids,
+            "harmonic_flux": flux,
+            "harmonic_periodic_boundary_flags": periodic_boundary_flags,
+            "harmonic_threshold_boundary_flags": threshold_boundary_flags,
             "harmonic_patch_len": mx.array(float(self.harmonic_patch_len), dtype=mx.float32),
         }
 
@@ -551,7 +640,7 @@ class GPTHarmonic(base.GPT):
         target_ids: mx.array,
         *,
         jepa_weight: float | None = None,
-    ) -> tuple[mx.array, mx.array, mx.array, mx.array, mx.array]:
+    ) -> tuple[mx.array, mx.array, mx.array, mx.array, mx.array, mx.array, mx.array]:
         jepa_weight = self.harmonic_jepa_weight if jepa_weight is None else jepa_weight
         final_hidden, _captured, aux = self.forward_hidden_with_aux(input_ids)
         ce_loss = self.token_ce_from_hidden(final_hidden, target_ids)
@@ -560,17 +649,42 @@ class GPTHarmonic(base.GPT):
         assert chord_states is not None
         assert chord_mask is not None
         jepa_loss = self.harmonic_terms_from_chords(chord_states, chord_mask)
-        total = ce_loss + mx.array(jepa_weight, dtype=mx.float32) * jepa_loss
+        norm_penalty = self.harmonic_norm_penalty(chord_states, chord_mask)
+        adjacent_cos_penalty = self.harmonic_adjacent_cos_penalty(chord_states, chord_mask)
+        total = (
+            ce_loss
+            + mx.array(jepa_weight, dtype=mx.float32) * jepa_loss
+            + mx.array(self.harmonic_chord_norm_weight, dtype=mx.float32) * norm_penalty
+            + mx.array(self.harmonic_adjacent_cos_weight, dtype=mx.float32) * adjacent_cos_penalty
+        )
         chord_counts = aux["harmonic_chord_counts"]
         flux_means = aux["harmonic_flux_means"]
         assert chord_counts is not None
         assert flux_means is not None
-        return total, ce_loss, jepa_loss, mx.mean(chord_counts.astype(mx.float32)), mx.mean(flux_means.astype(mx.float32))
+        return (
+            total,
+            ce_loss,
+            jepa_loss,
+            mx.mean(chord_counts.astype(mx.float32)),
+            mx.mean(flux_means.astype(mx.float32)),
+            norm_penalty,
+            adjacent_cos_penalty,
+        )
+
+
+def harmonic_base_kwargs_from_args(
+    args: Hyperparameters,
+    sp: spm.SentencePieceProcessor | None = None,
+) -> dict[str, object]:
+    kwargs = dict(base.gpt_kwargs_from_args(args, sp))
+    supported = set(inspect.signature(GPTHarmonic.__init__).parameters)
+    supported.discard("self")
+    return {key: value for key, value in kwargs.items() if key in supported}
 
 
 def make_harmonic_gpt(args: Hyperparameters, sp: spm.SentencePieceProcessor | None = None) -> GPTHarmonic:
     return GPTHarmonic(
-        **base.gpt_kwargs_from_args(args, sp),
+        **harmonic_base_kwargs_from_args(args, sp),
         harmonic_patch_len=args.harmonic_patch_len,
         harmonic_tap_layer=args.harmonic_tap_layer,
         harmonic_chord_dim=args.harmonic_chord_dim,
@@ -584,6 +698,11 @@ def make_harmonic_gpt(args: Hyperparameters, sp: spm.SentencePieceProcessor | No
         harmonic_jepa_weight=args.harmonic_jepa_weight,
         harmonic_read_init_std=args.harmonic_read_init_std,
         harmonic_pred_init_std=args.harmonic_pred_init_std,
+        harmonic_value_rmsnorm=args.harmonic_value_rmsnorm,
+        harmonic_chord_norm_weight=args.harmonic_chord_norm_weight,
+        harmonic_chord_norm_target=args.harmonic_chord_norm_target,
+        harmonic_adjacent_cos_weight=args.harmonic_adjacent_cos_weight,
+        harmonic_adjacent_cos_margin=args.harmonic_adjacent_cos_margin,
     )
 
 
@@ -730,7 +849,9 @@ def main() -> None:
         f"max_patches:{args.harmonic_max_patches_per_chord} boundary_threshold:{args.harmonic_boundary_threshold:.4f} "
         f"bank_size:{args.harmonic_bank_size} read_topk:{args.harmonic_read_topk} "
         f"enable_read:{int(args.harmonic_enable_read)} pred_offset:{args.harmonic_pred_offset} "
-        f"jepa_weight:{args.harmonic_jepa_weight:.4f}"
+        f"jepa_weight:{args.harmonic_jepa_weight:.4f} value_rmsnorm:{int(args.harmonic_value_rmsnorm)} "
+        f"norm_weight:{args.harmonic_chord_norm_weight:.4f} norm_target:{args.harmonic_chord_norm_target:.2f} "
+        f"adjacent_cos_weight:{args.harmonic_adjacent_cos_weight:.4f} adjacent_cos_margin:{args.harmonic_adjacent_cos_margin:.3f}"
     )
     log(
         f"iterations:{args.iterations} train_batch_tokens:{args.train_batch_tokens} grad_accum_steps:{args.grad_accum_steps} "
@@ -912,12 +1033,14 @@ def main() -> None:
             if last_batch is not None and (step <= 10 or step % max(args.train_log_every, 50) == 0):
                 metrics = compiled_loss_components(last_batch[0], last_batch[1], jepa_weight)
                 mx.eval(*metrics)
-                _, ce_metric, jepa_metric, chord_count_metric, flux_metric = metrics
+                _, ce_metric, jepa_metric, chord_count_metric, flux_metric, norm_metric, adjacent_cos_metric = metrics
                 extra = (
                     f" ce:{float(ce_metric.item()):.4f}"
                     f" harmonic_jepa:{float(jepa_metric.item()):.4f}"
                     f" harmonic_chords:{float(chord_count_metric.item()):.2f}"
                     f" harmonic_flux:{float(flux_metric.item()):.4f}"
+                    f" harmonic_norm_pen:{float(norm_metric.item()):.4f}"
+                    f" harmonic_adjcos_pen:{float(adjacent_cos_metric.item()):.4f}"
                 )
             log(
                 f"step:{step}/{args.iterations} train_loss:{train_loss_value:.4f} "

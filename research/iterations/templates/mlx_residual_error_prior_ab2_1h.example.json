@@ -1,0 +1,89 @@
+{
+  "iteration_id": "iter_YYYYMMDD_HHMMSS_residual_error_prior_ab2_1h",
+  "sweep_slug": "mlx-residual-error-prior-ab2-1h",
+  "dispatch_mode": "queue",
+  "queue_parallelism": 2,
+  "wrapper_script": "/home/zaytor/transformer_research/parameter-golf/run_train_gpt_mlx_config.py",
+  "script": "/home/zaytor/transformer_research/parameter-golf/train_gpt_mlx.py",
+  "support_files": [
+    "/home/zaytor/transformer_research/parameter-golf/train_gpt_mlx.py",
+    "/home/zaytor/transformer_research/parameter-golf/residual_feedback.py",
+    "/home/zaytor/transformer_research/parameter-golf/logic_register_mlx.py",
+    "/home/zaytor/transformer_research/parameter-golf/early_exit_aux.py",
+    "/home/zaytor/transformer_research/parameter-golf/text_prosody_features.py",
+    "/home/zaytor/transformer_research/parameter-golf/structural_branching.py",
+    "/home/zaytor/transformer_research/parameter-golf/sequential_data_filter.py",
+    "/home/zaytor/transformer_research/parameter-golf/token_category_weighting.py",
+    "/home/zaytor/transformer_research/parameter-golf/token_context_weighting.py",
+    "/home/zaytor/transformer_research/parameter-golf/replay_signal_runtime.py",
+    "/home/zaytor/transformer_research/parameter-golf/snapshot_signal_runtime.py",
+    "/home/zaytor/transformer_research/parameter-golf/apollo_mlx.py",
+    "/home/zaytor/transformer_research/parameter-golf/ternary_quant_mlx.py",
+    "/home/zaytor/transformer_research/parameter-golf/turbo_quant_mlx.py"
+  ],
+  "base_env": {
+    "DATA_PATH": "~/transformer_research/parameter-golf/data/datasets/fineweb10B_sp1024",
+    "TOKENIZER_PATH": "~/transformer_research/parameter-golf/data/tokenizers/fineweb_1024_bpe.model",
+    "VOCAB_SIZE": 1024,
+    "TRAIN_BATCH_TOKENS": 8192,
+    "TRAIN_LOG_EVERY": 100,
+    "VAL_BATCH_SIZE": 524288,
+    "VAL_LOSS_EVERY": 0,
+    "VAL_MAX_SEQS": 0,
+    "QUANT_EVAL_EVERY": 0,
+    "QUANT_EVAL_MAX_SEQS": 0,
+    "ITERATIONS": 60000,
+    "MAX_WALLCLOCK_SECONDS": 3600,
+    "WALLCLOCK_FINAL_RESERVE_SECONDS": 300,
+    "WARMUP_STEPS": 0,
+    "WARMDOWN_FRACTION": 0.18,
+    "MLX_COMPILE": 0,
+    "TIE_EMBEDDINGS": 0,
+    "MLP_LEAKY_SLOPE": 0.5,
+    "QUANT_FORMAT": "turbo_block_v1",
+    "TURBO_BLOCK_SIZE": 256,
+    "TURBO_EMBED_EXPORT": 1,
+    "TURBO_MSE_BITS": 3,
+    "TURBO_PROD_BITS": 4,
+    "TURBO_MSE_NAME_PATTERNS": "attn.c_q.weight,attn.c_v.weight,attn.proj.weight,mlp.fc.weight,mlp.proj.weight,lm_head.weight",
+    "TURBO_PROD_NAME_PATTERNS": "attn.c_k.weight",
+    "TURBO_QAT": 1,
+    "TURBO_QAT_LAMBDA": 0.01,
+    "TURBO_QAT_MUON_MOMENTUM": 0.92,
+    "TURBO_QAT_MUON_MOMENTUM_WARMUP_START": 0.82,
+    "TURBO_QAT_START_FRAC": 0.5,
+    "TURBO_QAT_RAMP_FRAC": 0.25,
+    "EMA_ENABLED": 0,
+    "MODEL_DIM": 512,
+    "NUM_HEADS": 8,
+    "NUM_KV_HEADS": 4,
+    "NUM_LAYERS": 9,
+    "NUM_LAYER_TEMPLATES": 9,
+    "MLP_MULT": 2,
+    "OUT_DIR": "logs"
+  },
+  "runs": [
+    {
+      "slug": "combined-control-1h",
+      "notes": "Current control baseline with no residual-error prior.",
+      "env": {
+        "RUN_ID": "mlx-residual-error-prior-ab2-1h_combined-control-1h",
+        "RESIDUAL_ERROR_PRIOR_ENABLED": 0
+      }
+    },
+    {
+      "slug": "combined-residual-error-prior-1h",
+      "notes": "Cheap global failure-mode prior: predict the model's residual direction from final hidden state.",
+      "env": {
+        "RUN_ID": "mlx-residual-error-prior-ab2-1h_combined-residual-error-prior-1h",
+        "RESIDUAL_ERROR_PRIOR_ENABLED": 1,
+        "RESIDUAL_ERROR_PRIOR_WEIGHT": 0.05,
+        "RESIDUAL_ERROR_PRIOR_BOTTLENECK_DIM": 64,
+        "RESIDUAL_ERROR_PRIOR_INIT_STD": 0.005,
+        "RESIDUAL_ERROR_PRIOR_COSINE_WEIGHT": 0.5,
+        "RESIDUAL_ERROR_PRIOR_NORM_EPSILON": 1.0e-6,
+        "RESIDUAL_ERROR_PRIOR_TARGET_MODE": "expected"
+      }
+    }
+  ]
+}

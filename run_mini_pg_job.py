@@ -463,6 +463,24 @@ def harmonic_prev_read_jepa_env(duration_seconds: int, run_suffix: str = "") -> 
     return env
 
 
+def harmonic_prev_read_jepa_normed_env(duration_seconds: int, run_suffix: str = "") -> dict[str, str]:
+    env = harmonic_prev_read_jepa_env(duration_seconds, run_suffix)
+    env["RUN_ID"] = f"harmonic_prev_read_jepa_normed_mlx_{platform.node()}{_suffix(run_suffix)}"
+    env["HARM_VALUE_RMSNORM"] = "1"
+    return env
+
+
+def harmonic_prev_read_jepa_guarded_env(duration_seconds: int, run_suffix: str = "") -> dict[str, str]:
+    env = harmonic_prev_read_jepa_normed_env(duration_seconds, run_suffix)
+    env["RUN_ID"] = f"harmonic_prev_read_jepa_guarded_mlx_{platform.node()}{_suffix(run_suffix)}"
+    env["HARM_JEPA_WEIGHT"] = "0.005"
+    env["HARM_CHORD_NORM_WEIGHT"] = "0.001"
+    env["HARM_CHORD_NORM_TARGET"] = "8.0"
+    env["HARM_ADJACENT_COS_WEIGHT"] = "0.05"
+    env["HARM_ADJACENT_COS_MARGIN"] = "0.90"
+    return env
+
+
 def apply_overrides(
     env: dict[str, str],
     *,
@@ -673,6 +691,8 @@ def main() -> None:
             "harmonic_local_only",
             "harmonic_prev_read",
             "harmonic_prev_read_jepa",
+            "harmonic_prev_read_jepa_normed",
+            "harmonic_prev_read_jepa_guarded",
         ),
         required=True,
     )
@@ -1440,6 +1460,74 @@ def main() -> None:
             [PYTHON, "train_gpt_mlx_harmonic.py"],
             env=apply_overrides(
                 harmonic_prev_read_jepa_env(args.duration_seconds, args.run_suffix),
+                turbo_profile=args.turbo_profile,
+                val_max_seqs=args.val_max_seqs,
+                quant_eval_max_seqs=args.quant_eval_max_seqs,
+                mlx_compile=args.mlx_compile,
+                jepa_geom_dim=None,
+                jepa_dyn_dim=None,
+                jepa_tap_layer=None,
+                jepa_pred_weight=None,
+                jepa_pred_offset=None,
+                jepa_pred_end_weight=None,
+                jepa_pred_decay_start_frac=None,
+                jepa_pred_decay_end_frac=None,
+                jepa_sigreg_weight=None,
+                jepa_spherical_weight=None,
+                jepa_dyn_spherical_weight=None,
+                jepa_dyn_cov_weight=None,
+                jepa_cross_weight=None,
+                jepa_sigreg_sample_mode=None,
+                jepa_sigreg_resample_proj=None,
+                jepa_aux_start_frac=None,
+                jepa_aux_ramp_frac=None,
+                jepa_summary_mode=None,
+                jepa_pred_mode=None,
+                jepa_pred_target_mode=None,
+                jepa_pred_init_std=None,
+                jepa_grad_scrub_nonfinite=None,
+            ),
+        )
+        return
+    if args.mode == "harmonic_prev_read_jepa_normed":
+        run(
+            [PYTHON, "train_gpt_mlx_harmonic.py"],
+            env=apply_overrides(
+                harmonic_prev_read_jepa_normed_env(args.duration_seconds, args.run_suffix),
+                turbo_profile=args.turbo_profile,
+                val_max_seqs=args.val_max_seqs,
+                quant_eval_max_seqs=args.quant_eval_max_seqs,
+                mlx_compile=args.mlx_compile,
+                jepa_geom_dim=None,
+                jepa_dyn_dim=None,
+                jepa_tap_layer=None,
+                jepa_pred_weight=None,
+                jepa_pred_offset=None,
+                jepa_pred_end_weight=None,
+                jepa_pred_decay_start_frac=None,
+                jepa_pred_decay_end_frac=None,
+                jepa_sigreg_weight=None,
+                jepa_spherical_weight=None,
+                jepa_dyn_spherical_weight=None,
+                jepa_dyn_cov_weight=None,
+                jepa_cross_weight=None,
+                jepa_sigreg_sample_mode=None,
+                jepa_sigreg_resample_proj=None,
+                jepa_aux_start_frac=None,
+                jepa_aux_ramp_frac=None,
+                jepa_summary_mode=None,
+                jepa_pred_mode=None,
+                jepa_pred_target_mode=None,
+                jepa_pred_init_std=None,
+                jepa_grad_scrub_nonfinite=None,
+            ),
+        )
+        return
+    if args.mode == "harmonic_prev_read_jepa_guarded":
+        run(
+            [PYTHON, "train_gpt_mlx_harmonic.py"],
+            env=apply_overrides(
+                harmonic_prev_read_jepa_guarded_env(args.duration_seconds, args.run_suffix),
                 turbo_profile=args.turbo_profile,
                 val_max_seqs=args.val_max_seqs,
                 quant_eval_max_seqs=args.quant_eval_max_seqs,

@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 DISPATCH_RE = re.compile(
-    r"^\[(?P<ts>[^\]]+)\]\s+dispatch config=(?P<config>\S+)\s+host=(?P<host>\S+)\s+attempt=(?P<attempt>\d+)/(?P<total>\d+)"
+    r"^\[(?P<ts>[^\]]+)\]\s+(?:serial_)?dispatch config=(?P<config>\S+)\s+host=(?P<host>\S+)(?:\s+attempt=(?P<attempt>\d+)/(?P<total>\d+)|\s+run_slug=\S+\s+index=(?P<serial_idx>\d+)/(?P<serial_total>\d+))"
 )
 JOB_RE = re.compile(r"^\[(?P<job>job_[^\]]+)\]\s+(?P<msg>.*)$")
 CLAIMED_RE = re.compile(r"^Claimed (?P<host>\S+)")
@@ -72,8 +72,10 @@ def summarize_sweep(iteration_dir: Path, *, check_remote: bool) -> list[dict[str
                 config_name = m.group("config")
                 pending_configs.append(config_name)
                 row = summary.setdefault(config_name, {"config": config_name})
-                row["attempt"] = int(m.group("attempt"))
-                row["attempt_total"] = int(m.group("total"))
+                attempt = m.group("attempt") or m.group("serial_idx") or "1"
+                total = m.group("total") or m.group("serial_total") or "1"
+                row["attempt"] = int(attempt)
+                row["attempt_total"] = int(total)
                 row["status"] = "dispatching"
                 continue
             m = JOB_RE.match(line)

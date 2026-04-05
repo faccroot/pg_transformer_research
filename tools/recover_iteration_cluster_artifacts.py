@@ -3,13 +3,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import shlex
 import subprocess
 import sys
 from pathlib import Path
 
-from run_iteration_saved_diagnostics import build_run_entries, load_json
-from update_iteration_observed_results import build_observed_results, collect_search_roots
+try:
+    from tools.run_iteration_saved_diagnostics import build_run_entries, load_json
+    from tools.update_iteration_observed_results import build_observed_results, collect_search_roots
+except ImportError:
+    from run_iteration_saved_diagnostics import build_run_entries, load_json
+    from update_iteration_observed_results import build_observed_results, collect_search_roots
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,6 +23,9 @@ RECOVER_SUFFIXES = (
     "_mlx_model.npz",
     "_mlx_model.int8.ptz",
     "_int8zlib.pklz",
+    "_trace_pretrain_model.npz",
+    "_hardmax_controller_init.npz",
+    ".summary.json",
     ".txt",
 )
 
@@ -92,10 +100,11 @@ def parse_args() -> argparse.Namespace:
 
 def ssh_find_remote_path(host: str, filename: str, *, timeout: float) -> str:
     quoted = shlex.quote(f"*{filename}")
+    timeout_int = max(int(math.ceil(float(timeout))), 1)
     cmd = [
         "ssh",
         "-o",
-        f"ConnectTimeout={max(float(timeout), 0.1):.3f}",
+        f"ConnectTimeout={timeout_int}",
         host,
         f"find ~/jobs -path {quoted} 2>/dev/null | tail -n 1",
     ]

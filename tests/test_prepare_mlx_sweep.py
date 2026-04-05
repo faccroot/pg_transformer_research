@@ -12,6 +12,34 @@ ROOT = Path("/home/zaytor/transformer_research/parameter-golf")
 
 
 class PrepareMlxSweepTests(unittest.TestCase):
+    def test_queue_launch_script_skips_completed_runs_after_nonzero_dispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            spec_path = tmp_path / "queue_retry_guard.json"
+            spec_path.write_text("{}", encoding="utf-8")
+            out_dir = tmp_path / "out"
+            spec = {
+                "sweep_slug": "queue-retry-guard",
+                "dispatch_mode": "queue",
+                "script": str(ROOT / "train_gpt_mlx.py"),
+                "wrapper_script": str(ROOT / "run_train_gpt_mlx_config.py"),
+                "runs": [
+                    {
+                        "slug": "baseline",
+                        "env": {
+                            "RUN_ID": "queue_retry_guard_baseline",
+                        },
+                    }
+                ],
+            }
+
+            prepare_sweep(spec, spec_path, out_dir)
+
+            launch_text = (out_dir / "launch.sh").read_text(encoding="utf-8")
+            self.assertIn("run_has_completed_outputs()", launch_text)
+            self.assertIn("dispatch_skip_completed", launch_text)
+            self.assertIn("dispatch_nonzero_but_completed", launch_text)
+
     def test_queue_mode_stages_env_file_values_and_rewrites_to_basename(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)

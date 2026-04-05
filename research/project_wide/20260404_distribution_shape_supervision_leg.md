@@ -59,6 +59,11 @@ Current status:
   - `statebook-freeze300-ema-kl005`
 - the critical separator run is `random-ema-kl010`
 
+Important reframing:
+
+- plain sharp KL is no longer the preferred long-term H13 form
+- the next useful H13 work should be calibrated uncertainty distillation, not only "more EMA-KL at temperature 1"
+
 Decision separator:
 
 - matched random-init EMA-KL control
@@ -81,6 +86,19 @@ Question:
 
 - does a stronger structured teacher distribution improve over EMA self-distill?
 
+### D4. Uncertainty-aware distillation
+
+New principal variation for H13:
+
+- temperature-scaled teacher KL
+- entropy-gated KL on high-uncertainty positions
+- later, variance-aware or checkpoint-ensemble teacher targets
+
+Intended read:
+
+- preserve dark knowledge that plain sharp KL may wash out
+- test whether the soft control surface benefits more from calibrated targets than from overconfident ones
+
 ## Existing engineering seam
 
 [train_gpt_mlx.py](/home/zaytor/transformer_research/parameter-golf/train_gpt_mlx.py)
@@ -101,3 +119,8 @@ Advance this branch if:
 - BPB improves at matched artifact format
 - random-init does not explain away the whole gain
 - the result holds at a reasonable KL weight rather than only at one fragile setting
+
+Current queue interpretation:
+
+- keep the live EMA-KL smoke as H13a
+- but promote calibrated uncertainty-aware KL to H13b as the next true follow-on if H13 remains worth pursuing

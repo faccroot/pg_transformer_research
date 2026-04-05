@@ -156,6 +156,57 @@ class UpdateIterationObservedResultsTests(unittest.TestCase):
             self.assertIn("combined-control-1h", text)
             self.assertIn("final_raw_bpb=1.800000", text)
 
+    def test_trace_pretrain_summary_marks_run_observed_final(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            iteration_dir = root / "iter"
+            configs_dir = iteration_dir / "configs"
+            artifacts_dir = iteration_dir / "artifacts"
+            configs_dir.mkdir(parents=True)
+            artifacts_dir.mkdir(parents=True)
+            _write_config(configs_dir / "01_trace.json")
+            manifest = {
+                "runs": [
+                    {
+                        "config_path": "configs/01_trace.json",
+                        "run_id": "run_trace",
+                        "run_slug": "trace-export",
+                    }
+                ],
+            }
+            (iteration_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+            (artifacts_dir / "run_trace.summary.json").write_text(
+                json.dumps(
+                    {
+                        "best_val": {
+                            "loss": 4.2,
+                            "opcode_acc": 0.61,
+                            "stack_depth_acc": 0.66,
+                        },
+                        "final_train": {
+                            "loss": 4.0,
+                            "opcode_acc": 0.64,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            payload = build_observed_results(
+                iteration_dir,
+                check_remote=False,
+                search_roots=collect_search_roots(iteration_dir, []),
+            )
+            run = payload["runs"]["trace-export"]
+            self.assertEqual(run["status"], "observed_final")
+            self.assertAlmostEqual(run["final_trace_pretrain_best_val"]["loss"], 4.2)
+            self.assertAlmostEqual(run["final_trace_pretrain_best_val"]["opcode_acc"], 0.61)
+
+            summary_path = write_observed_summary(iteration_dir, payload)
+            text = summary_path.read_text(encoding="utf-8")
+            self.assertIn("trace_val_loss=4.200000", text)
+            self.assertIn("trace_opcode_acc=0.610000", text)
+
 
 if __name__ == "__main__":
     unittest.main()

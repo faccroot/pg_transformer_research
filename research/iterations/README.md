@@ -4,6 +4,7 @@ This folder is set up for scale.
 
 - `iteration_index.jsonl` is the primary index for architectural changes and research branches.
 - `run_index.jsonl` is the primary index for actual executions.
+- `derived/runtime_metrics.sqlite` is the searchable per-step metric index built from generated sweep logs.
 - `archive/` is optional. Use it only when an iteration needs longer notes, plots, patches, or other supporting files.
 - `templates/` contains lightweight note skeletons for manual write-ups.
 
@@ -40,3 +41,37 @@ Suggested field discipline:
 - Run entries should capture the exact command, host, dataset/shard choice, metrics, log path, and artifact path when relevant.
 - Keep cluster machine logs in `logs/` or your remote filesystem; keep only metadata links in the JSONL tracker.
 
+Generated queue sweeps also support a structured runtime bridge:
+
+```bash
+python3 tools/update_iteration_runtime_index.py update research/iterations/generated/<iteration_dir>
+python3 tools/update_iteration_runtime_index.py list-runs --run-like prosody
+python3 tools/update_iteration_runtime_index.py search-metric val_bpb --phase val --run-like hardmax
+python3 tools/update_iteration_runtime_index.py list-cluster-hosts --status BUSY
+python3 tools/update_iteration_runtime_index.py list-cluster-jobs --status running
+python3 tools/update_iteration_runtime_index.py search-analysis-metric mean_nll --iteration-like residual_autocorr_sidecar
+```
+
+That updater writes per-iteration artifacts:
+
+- `cluster_queue_snapshot.json`
+- `cluster_queue_summary.md`
+- `runtime_state.json`
+- `runtime_metrics_manifest.json`
+- `runtime_summary.md`
+
+and updates:
+
+- `research/iterations/derived/runtime_metrics.sqlite`
+
+Queue state comes from the external Mac-mini control plane under `~/cluster`,
+but it is snapshotted into each generated iteration so queue truth, experiment
+truth, and research-tree truth stay linked without sharing a single database.
+
+Generated queue sweeps prepared by [prepare_mlx_sweep.py](/home/zaytor/transformer_research/parameter-golf/tools/prepare_mlx_sweep.py)
+now run this bridge automatically in `post_run`, followed by a direct
+branch-memory ingest.
+
+The updater also supports analysis-only iteration directories without a
+`manifest.json`, which is useful for standalone residual/prosody/hardmax result
+bundles under `research/iterations/generated/`.

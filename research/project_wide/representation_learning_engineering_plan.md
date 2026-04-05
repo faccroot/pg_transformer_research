@@ -1154,3 +1154,103 @@ Durable assets for the new frontier:
 - `research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_olmo_product_tuning_v1/comparison_v1.json`
 - `research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_olmo_product_tuning_external_eval_v1/comparison_v1.json`
 - `research/iterations/templates/representation_learning_kernel_teacher_student_olmo_product_tuning_v2.example.json`
+
+## Promotion To Real Training
+
+The representation-learning lane is now narrow enough that the next real
+question is not teacher cleverness but pretraining leverage.
+
+Current promotion baseline:
+
+- fixed teacher: `OLMo`
+- small student: `MODEL_DIM=128`, `NUM_LAYERS=2`
+- `projection_mode=direct`
+- `readout_mode=mean_last`
+- current best checkpoint:
+  - `research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_olmo_product_tuning_v1/ce030_e12_lr5e4/best_kernel_teacher_student.npz`
+- current best external eval:
+  - `bpb = 1.5018`
+
+Generic init support now exists directly in `train_gpt_mlx.py`:
+
+- `TRANSFER_INIT_PATH`
+- `TRANSFER_INIT_PREFIX`
+- `TRANSFER_INIT_RESET_LM_HEAD`
+- `TRANSFER_INIT_FREEZE_STEPS`
+
+This makes the first promotion experiment straightforward:
+
+1. `R0`: random-init control
+2. `R1`: transfer full backbone from the best student checkpoint
+3. `R2`: transfer backbone but reinitialize `lm_head`
+4. `R3`: transfer backbone and freeze transferred tensors for the first
+   ~1-3% of steps
+
+Durable asset for the first promotion test:
+
+- `research/iterations/templates/mlx_kernel_student_init_promotion_smoke.example.json`
+
+Decision rule:
+
+- if any transferred-init arm beats random-init at matched steps or reaches the
+  same BPB materially earlier, this lane graduates from pure student
+  distillation into a real competition-relevant initialization lever.
+
+First promotion smoke result:
+
+- `R0` random init: `val_bpb = 2.07659646`
+- `R1` transfer full: `2.07829793`
+- `R2` transfer + reset head: `2.07269148`
+- `R3` transfer + freeze32: `2.07850925`
+
+So the first answer is not “transfer works” in the broad sense. It is narrower:
+
+- full transfer is slightly worse than random init
+- freezing transferred weights without resetting the head is also worse
+- the only winning branch is transfer-with-reset-head
+
+That is enough to keep the lane alive, because `R2` is better than the matched
+random-init control on the same smoke budget. But it also sharpens the next
+branch:
+
+1. keep transferred backbone init
+2. always reset the `lm_head`
+3. test whether early freeze helps only in combination with head reset
+
+Durable assets for this result:
+
+- `research/representation_learning/reports/kernel_student_init_promotion_smoke_v1.json`
+- `research/representation_learning/reports/kernel_student_init_promotion_reset_head_freeze_v1.json`
+- `research/iterations/templates/mlx_kernel_student_init_promotion_followup.example.json`
+- `research/iterations/templates/mlx_kernel_student_init_promotion_reset_head_freeze.example.json`
+- `research/iterations/templates/mlx_kernel_student_init_promotion_reset_head_freeze_short.example.json`
+
+Reset-head freeze follow-up:
+
+- `reset_head_freeze08`: `2.07047434`
+- `R2` transfer + reset head: `2.07269148`
+- `R0` random init: `2.07659646`
+- `reset_head_freeze32`: `2.07713610`
+- `reset_head_freeze04`: `2.07868364`
+- `reset_head_freeze64`: `2.08103224`
+
+So the branch is narrowing again:
+
+- head reset remains necessary
+- a short freeze looks better than no freeze
+- among tested hard-freeze windows, `freeze08` is the clear winner
+- `freeze04`, `freeze32`, and `freeze64` are all worse than `freeze08`
+- the live frontier should therefore move from hard-freeze length search to
+  softer preservation of transferred weights
+
+Soft-freeze branch staged:
+
+- `research/iterations/templates/mlx_kernel_student_init_promotion_reset_head_grad_scale.example.json`
+
+This gives the next lower-risk alternative if hard freezes plateau: keep head
+reset, keep the same transferred backbone, but scale transferred gradients for
+the first `64` steps instead of zeroing them entirely.
+
+Current live grad-scale sweep:
+
+- `research/iterations/generated/20260405_164235_mlx-kernel-student-init-promotion-reset-head-grad-scale/manifest.json`

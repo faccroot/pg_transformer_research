@@ -66,6 +66,12 @@ from text_prosody_features import (
     build_token_prosody_luts,
 )
 from replay_signal_runtime import FileReplayBuffer, ReplayExample, ReplayMixTokenLoader
+from residual_feedback import (
+    ResidualErrorPriorConfig,
+    ResidualNoveltyWeightingConfig,
+    argmax_residual_novelty_weights_from_ids,
+    residual_prediction_alignment_loss,
+)
 from snapshot_signal_runtime import StudentSnapshotRuntime
 from teacher_signal_runtime import FileTeacherHiddenCache, TeacherHiddenExample, teacher_window_key, window_tokens_from_xy
 
@@ -306,6 +312,18 @@ class Hyperparameters:
     )
     curriculum_context_delta_power: float = float(os.environ.get("CURRICULUM_CONTEXT_DELTA_POWER", 1.0))
     curriculum_context_delta_use_abs: bool = bool(int(os.environ.get("CURRICULUM_CONTEXT_DELTA_USE_ABS", "1")))
+    residual_novelty_weighting_enabled: bool = bool(int(os.environ.get("RESIDUAL_NOVELTY_WEIGHTING_ENABLED", "0")))
+    residual_novelty_min_scale: float = float(os.environ.get("RESIDUAL_NOVELTY_MIN_SCALE", "0.75"))
+    residual_novelty_max_scale: float = float(os.environ.get("RESIDUAL_NOVELTY_MAX_SCALE", "1.25"))
+    residual_novelty_norm_epsilon: float = float(os.environ.get("RESIDUAL_NOVELTY_NORM_EPSILON", "1.0e-6"))
+    residual_novelty_ema_decay: float = float(os.environ.get("RESIDUAL_NOVELTY_EMA_DECAY", "0.0"))
+    residual_error_prior_enabled: bool = bool(int(os.environ.get("RESIDUAL_ERROR_PRIOR_ENABLED", "0")))
+    residual_error_prior_weight: float = float(os.environ.get("RESIDUAL_ERROR_PRIOR_WEIGHT", "0.0"))
+    residual_error_prior_bottleneck_dim: int = int(os.environ.get("RESIDUAL_ERROR_PRIOR_BOTTLENECK_DIM", "64"))
+    residual_error_prior_init_std: float = float(os.environ.get("RESIDUAL_ERROR_PRIOR_INIT_STD", "0.005"))
+    residual_error_prior_cosine_weight: float = float(os.environ.get("RESIDUAL_ERROR_PRIOR_COSINE_WEIGHT", "0.5"))
+    residual_error_prior_norm_epsilon: float = float(os.environ.get("RESIDUAL_ERROR_PRIOR_NORM_EPSILON", "1.0e-6"))
+    residual_error_prior_target_mode: str = os.environ.get("RESIDUAL_ERROR_PRIOR_TARGET_MODE", "expected")
     structural_branching_enabled: bool = bool(int(os.environ.get("STRUCTURAL_BRANCHING_ENABLED", "0")))
     structural_branching_start_frac: float = float(os.environ.get("STRUCTURAL_BRANCHING_START_FRAC", 0.6))
     structural_branching_weight: float = float(os.environ.get("STRUCTURAL_BRANCHING_WEIGHT", 0.1))
@@ -462,6 +480,23 @@ class Hyperparameters:
     hardmax_struct_statebook_freeze_steps: int = int(
         os.environ.get("HARDMAX_STRUCT_STATEBOOK_FREEZE_STEPS", "0")
     )
+    transfer_init_path: str = os.environ.get("TRANSFER_INIT_PATH", "").strip()
+    transfer_init_prefix: str = os.environ.get("TRANSFER_INIT_PREFIX", "backbone.").strip()
+    transfer_init_reset_lm_head: bool = bool(int(os.environ.get("TRANSFER_INIT_RESET_LM_HEAD", "0")))
+    transfer_init_freeze_steps: int = int(os.environ.get("TRANSFER_INIT_FREEZE_STEPS", "0"))
+    transfer_init_grad_scale: float = float(os.environ.get("TRANSFER_INIT_GRAD_SCALE", "1.0"))
+    transfer_init_grad_scale_steps: int = int(os.environ.get("TRANSFER_INIT_GRAD_SCALE_STEPS", "0"))
+    hardmax_struct_state_usage_entropy_weight: float = float(
+        os.environ.get("HARDMAX_STRUCT_STATE_USAGE_ENTROPY_WEIGHT", "0.0")
+    )
+    hardmax_struct_state_commit_weight: float = float(
+        os.environ.get("HARDMAX_STRUCT_STATE_COMMIT_WEIGHT", "0.0")
+    )
+    hardmax_struct_transition_boundary_weight: float = float(
+        os.environ.get("HARDMAX_STRUCT_TRANSITION_BOUNDARY_WEIGHT", "0.0")
+    )
+    hardmax_struct_simvq_enabled: bool = bool(int(os.environ.get("HARDMAX_STRUCT_SIMVQ_ENABLED", "0")))
+    hardmax_struct_nextlat_weight: float = float(os.environ.get("HARDMAX_STRUCT_NEXTLAT_WEIGHT", "0.0"))
     beta1: float = float(os.environ.get("BETA1", 0.9))
     beta2: float = float(os.environ.get("BETA2", 0.95))
     adam_eps: float = float(os.environ.get("ADAM_EPS", 1e-8))
@@ -766,6 +801,27 @@ def context_delta_weighting_config(args: Hyperparameters) -> ContextDeltaWeighti
         topk_fraction=args.curriculum_context_delta_topk_fraction,
         score_power=args.curriculum_context_delta_power,
         use_absolute_delta=args.curriculum_context_delta_use_abs,
+    )
+
+
+def residual_novelty_weighting_config(args: Hyperparameters) -> ResidualNoveltyWeightingConfig:
+    return ResidualNoveltyWeightingConfig(
+        enabled=args.residual_novelty_weighting_enabled,
+        min_scale=args.residual_novelty_min_scale,
+        max_scale=args.residual_novelty_max_scale,
+        norm_epsilon=args.residual_novelty_norm_epsilon,
+        ema_decay=args.residual_novelty_ema_decay,
+    )
+
+
+def residual_error_prior_config(args: Hyperparameters) -> ResidualErrorPriorConfig:
+    return ResidualErrorPriorConfig(
+        enabled=args.residual_error_prior_enabled,
+        weight=args.residual_error_prior_weight,
+        bottleneck_dim=args.residual_error_prior_bottleneck_dim,
+        cosine_weight=args.residual_error_prior_cosine_weight,
+        norm_epsilon=args.residual_error_prior_norm_epsilon,
+        target_mode=str(args.residual_error_prior_target_mode).strip().lower() or "expected",
     )
 
 
@@ -1454,6 +1510,25 @@ class ProsodyStateAdapter(nn.Module):
         )
         return x + self.output_scale * residual
 
+
+class ResidualErrorPrior(nn.Module):
+    def __init__(self, dim: int, *, bottleneck_dim: int, init_std: float):
+        super().__init__()
+        if bottleneck_dim <= 0:
+            raise ValueError(f"bottleneck_dim must be positive, got {bottleneck_dim}")
+        self.bottleneck_dim = int(bottleneck_dim)
+        self.in_proj = CastedLinear(dim, self.bottleneck_dim)
+        self.out_proj = CastedLinear(self.bottleneck_dim, dim)
+        for layer in (self.in_proj, self.out_proj):
+            layer.weight = (
+                mx.random.normal(layer.weight.shape, dtype=mx.float32) * float(init_std)
+            ).astype(mx.float32)
+
+    def __call__(self, x: mx.array) -> mx.array:
+        hidden = self.in_proj(x.astype(COMPUTE_DTYPE)).astype(x.dtype)
+        hidden = mx.tanh(hidden)
+        return self.out_proj(hidden.astype(COMPUTE_DTYPE)).astype(x.dtype)
+
 class CausalSelfAttention(nn.Module):
     def __init__(
         self,
@@ -1632,6 +1707,11 @@ class GPT(nn.Module):
                  hardmax_struct_condition_mode: str = "residual",
                  hardmax_struct_attn_q_scale: float = 1.0,
                  hardmax_struct_attn_tau_min: float = 0.75,
+                 hardmax_struct_state_usage_entropy_weight: float = 0.0,
+                 hardmax_struct_state_commit_weight: float = 0.0,
+                 hardmax_struct_transition_boundary_weight: float = 0.0,
+                 hardmax_struct_simvq_enabled: bool = False,
+                 hardmax_struct_nextlat_weight: float = 0.0,
                  early_exit_layer_index: int = -1, early_exit_horizons: tuple[int, ...] = (),
                  early_exit_aux_weight: float = 0.0, early_exit_head_init_std: float = 0.005,
                  early_exit_cascaded_enabled: bool = False, early_exit_condition_init_std: float = 0.001,
@@ -1651,6 +1731,13 @@ class GPT(nn.Module):
                  prosody_aux_boundary_weight: float = 1.0,
                  prosody_aux_quote_weight: float = 0.25,
                  prosody_aux_punctuation_weight: float = 0.5,
+                 residual_error_prior_enabled: bool = False,
+                 residual_error_prior_weight: float = 0.0,
+                 residual_error_prior_bottleneck_dim: int = 64,
+                 residual_error_prior_init_std: float = 0.005,
+                 residual_error_prior_cosine_weight: float = 0.5,
+                 residual_error_prior_norm_epsilon: float = 1.0e-6,
+                 residual_error_prior_target_mode: str = "expected",
                  token_prosody_luts: TokenProsodyLuts | None = None):
         super().__init__()
         if logit_softcap <= 0.0:
@@ -1740,6 +1827,12 @@ class GPT(nn.Module):
         self._hardmax_struct_token_class_weight = float(hardmax_struct_token_class_weight)
         self._hardmax_struct_boundary_weight = float(hardmax_struct_boundary_weight)
         self._hardmax_struct_quote_weight = float(hardmax_struct_quote_weight)
+        self._hardmax_struct_state_usage_entropy_weight = float(hardmax_struct_state_usage_entropy_weight)
+        self._hardmax_struct_state_commit_weight = float(hardmax_struct_state_commit_weight)
+        self._hardmax_struct_transition_boundary_weight = float(hardmax_struct_transition_boundary_weight)
+        self._hardmax_struct_simvq_enabled = bool(hardmax_struct_simvq_enabled)
+        self._hardmax_struct_nextlat_weight = float(hardmax_struct_nextlat_weight)
+        self._hardmax_struct_statebook_anchor_np: np.ndarray | None = None
         self._early_exit_horizons = tuple(int(value) for value in early_exit_horizons)
         self._early_exit_aux_weight = float(early_exit_aux_weight)
         self._early_exit_cascaded_enabled = bool(early_exit_cascaded_enabled)
@@ -1758,6 +1851,17 @@ class GPT(nn.Module):
         self._prosody_aux_boundary_weight = float(prosody_aux_boundary_weight)
         self._prosody_aux_quote_weight = float(prosody_aux_quote_weight)
         self._prosody_aux_punctuation_weight = float(prosody_aux_punctuation_weight)
+        self._residual_error_prior_enabled = bool(residual_error_prior_enabled)
+        self._residual_error_prior_weight = float(residual_error_prior_weight)
+        self._residual_error_prior_bottleneck_dim = max(int(residual_error_prior_bottleneck_dim), 1)
+        self._residual_error_prior_cosine_weight = float(residual_error_prior_cosine_weight)
+        self._residual_error_prior_norm_epsilon = float(residual_error_prior_norm_epsilon)
+        residual_error_target_mode = str(residual_error_prior_target_mode).strip().lower()
+        if residual_error_target_mode not in {"expected", "argmax"}:
+            raise ValueError(
+                f"residual_error_prior_target_mode must be one of expected/argmax, got {residual_error_prior_target_mode!r}"
+            )
+        self._residual_error_prior_target_mode = residual_error_target_mode
 
         self.tok_emb = nn.Embedding(vocab_size, dim)
         self.register_tokens = RegisterTokens(num_registers, dim) if num_registers > 0 else None
@@ -1788,6 +1892,7 @@ class GPT(nn.Module):
                 compute_power=float(hardmax_struct_compute_power),
                 operator_prior_scale=float(hardmax_struct_operator_prior_scale),
                 reset_prior_scale=float(hardmax_struct_reset_prior_scale),
+                simvq_enabled=bool(hardmax_struct_simvq_enabled),
             )
         self.hardmax_struct_operator_head: CastedLinear | None = None
         self.hardmax_struct_token_class_head: CastedLinear | None = None
@@ -1795,12 +1900,22 @@ class GPT(nn.Module):
         self.hardmax_struct_quote_head: CastedLinear | None = None
         self.hardmax_struct_attn_q_proj: CastedLinear | None = None
         self.hardmax_struct_attn_tau_proj: CastedLinear | None = None
+        self.hardmax_struct_nextlat_state_proj: CastedLinear | None = None
+        self.hardmax_struct_nextlat_token_proj: CastedLinear | None = None
+        self.hardmax_struct_nextlat_head: CastedLinear | None = None
         if self.hardmax_structural_controller is not None and self.hardmax_struct_condition_mode in {"q_bias", "q_bias_temp"}:
             self.hardmax_struct_attn_q_proj = CastedLinear(hardmax_struct_dim, dim)
             self.hardmax_struct_attn_q_proj.weight = mx.zeros_like(self.hardmax_struct_attn_q_proj.weight)
             if self.hardmax_struct_condition_mode == "q_bias_temp":
                 self.hardmax_struct_attn_tau_proj = CastedLinear(hardmax_struct_dim, num_heads)
                 self.hardmax_struct_attn_tau_proj.weight = mx.zeros_like(self.hardmax_struct_attn_tau_proj.weight)
+        if self.hardmax_structural_controller is not None and self._hardmax_struct_nextlat_weight > 0.0:
+            self.hardmax_struct_nextlat_state_proj = CastedLinear(hardmax_struct_dim, hardmax_struct_dim)
+            self.hardmax_struct_nextlat_state_proj.weight = mx.eye(hardmax_struct_dim, dtype=mx.float32)
+            self.hardmax_struct_nextlat_token_proj = CastedLinear(dim, hardmax_struct_dim)
+            self.hardmax_struct_nextlat_head = CastedLinear(hardmax_struct_dim, int(self.hardmax_structural_controller.num_states))
+            for layer in (self.hardmax_struct_nextlat_token_proj, self.hardmax_struct_nextlat_head):
+                layer.weight = (mx.random.normal(layer.weight.shape, dtype=mx.float32) * 0.005).astype(mx.float32)
         if self.hardmax_structural_controller is not None and (
             self._hardmax_struct_predict_weight > 0.0 or self._hardmax_struct_confidence_weight > 0.0
         ):
@@ -1830,6 +1945,7 @@ class GPT(nn.Module):
         self.prosody_punctuation_emb: nn.Embedding | None = None
         self.prosody_feature_emb: mx.array | None = None
         self.prosody_state_adapter: ProsodyStateAdapter | None = None
+        self.residual_error_prior: ResidualErrorPrior | None = None
         self._prosody_feature_names: tuple[str, ...] = ()
         self._prosody_feature_name_to_idx: dict[str, int] = {}
         self._prosody_token_class_lut = None
@@ -1875,6 +1991,12 @@ class GPT(nn.Module):
                 hierarchical_enabled=bool(prosody_state_hierarchical_enabled),
                 slow_reset_scale=float(prosody_state_slow_reset_scale),
                 feature_name_to_idx=self._prosody_feature_name_to_idx,
+            )
+        if self._residual_error_prior_enabled and self._residual_error_prior_weight > 0.0:
+            self.residual_error_prior = ResidualErrorPrior(
+                dim,
+                bottleneck_dim=self._residual_error_prior_bottleneck_dim,
+                init_std=float(residual_error_prior_init_std),
             )
         if not tie_embeddings:
             self.lm_head = make_turbo_linear("lm_head.weight", dim, vocab_size)
@@ -1958,6 +2080,9 @@ class GPT(nn.Module):
             and self._prosody_punctuation_role_lut is not None
             and self._prosody_quote_like_lut is not None
         )
+
+    def has_residual_error_prior(self) -> bool:
+        return self.residual_error_prior is not None and self._residual_error_prior_weight > 0.0
 
     def has_hardmax_structural_controller(self) -> bool:
         return self.hardmax_structural_controller is not None
@@ -2452,6 +2577,160 @@ class GPT(nn.Module):
             quote_loss.astype(mx.float32),
             conf_loss.astype(mx.float32),
         )
+
+    def capture_hardmax_structural_statebook_anchor(self) -> None:
+        controller = getattr(self, "hardmax_structural_controller", None)
+        if controller is None or not hasattr(controller, "state_book"):
+            self._hardmax_struct_statebook_anchor_np = None
+            return
+        effective_book = (
+            controller.effective_state_book().astype(mx.float32)
+            if hasattr(controller, "effective_state_book")
+            else controller.state_book.astype(mx.float32)
+        )
+        self._hardmax_struct_statebook_anchor_np = np.asarray(
+            effective_book,
+            dtype=np.float32,
+        ).copy()
+
+    def hardmax_structural_anti_collapse_loss_terms(
+        self,
+        aux: dict[str, mx.array | None],
+        target_ids: mx.array,
+        *,
+        token_weights: mx.array | None = None,
+    ) -> tuple[mx.array, mx.array, mx.array]:
+        zero = mx.array(0.0, dtype=mx.float32)
+        controller = getattr(self, "hardmax_structural_controller", None)
+        if controller is None:
+            return zero, zero, zero
+        structural_aux = aux.get("hardmax_structural")
+        if not isinstance(structural_aux, dict):
+            return zero, zero, zero
+        soft_usage = structural_aux.get("soft_usage")
+        if soft_usage is None:
+            return zero, zero, zero
+        soft_usage = strip_register_positions(
+            soft_usage.astype(mx.float32),
+            self.num_registers,
+            layout=self.register_layout,
+            register_stride=self.register_stride,
+        )
+        if isinstance(soft_usage, np.ndarray):
+            raise TypeError("hardmax_structural_anti_collapse_loss_terms expects mlx arrays")
+
+        usage_entropy_loss = zero
+        if int(controller.num_states) > 1:
+            mean_usage = mx.mean(soft_usage.astype(mx.float32), axis=(0, 1))
+            usage_entropy = -mx.sum(
+                mean_usage * mx.log(mx.maximum(mean_usage, mx.array(1.0e-8, dtype=mx.float32)))
+            ) / float(math.log(max(int(controller.num_states), 2)))
+            usage_entropy_loss = (1.0 - usage_entropy).astype(mx.float32)
+
+        commit_loss = zero
+        if self._hardmax_struct_statebook_anchor_np is not None and hasattr(controller, "state_book"):
+            current_book = (
+                controller.effective_state_book().astype(mx.float32)
+                if hasattr(controller, "effective_state_book")
+                else controller.state_book.astype(mx.float32)
+            )
+            anchor_np = self._hardmax_struct_statebook_anchor_np
+            if tuple(anchor_np.shape) == tuple(current_book.shape):
+                anchor_book = mx.array(anchor_np, dtype=mx.float32)
+                commit_loss = mx.mean(mx.square(current_book - anchor_book)).astype(mx.float32)
+
+        transition_boundary_loss = zero
+        if int(soft_usage.shape[1]) > 1:
+            _token_class_lut, boundary_lut, _punct_lut, quote_lut = self._prosody_label_luts()
+            target_boundary = boundary_lut[target_ids.astype(mx.int32)].astype(mx.float32)
+            boundary_norm = target_boundary / float(max(len(BOUNDARY_STRENGTH_NAMES) - 1, 1))
+            target_quote = quote_lut[target_ids.astype(mx.int32)].astype(mx.float32)
+            quote_flip = mx.abs(target_quote[:, 1:] - target_quote[:, :-1])
+            target_transition = mx.maximum(boundary_norm[:, 1:], quote_flip)
+            transition_strength = 0.5 * mx.sum(
+                mx.abs(soft_usage[:, 1:, :] - soft_usage[:, :-1, :]),
+                axis=-1,
+            )
+            transition_sq = mx.square(transition_strength.astype(mx.float32) - target_transition.astype(mx.float32))
+            if token_weights is None:
+                transition_boundary_loss = mx.mean(transition_sq).astype(mx.float32)
+            else:
+                weights = mx.maximum(token_weights[:, 1:].astype(mx.float32), mx.array(0.0, dtype=mx.float32))
+                transition_boundary_loss = (
+                    mx.sum(transition_sq * weights)
+                    / mx.maximum(mx.sum(weights), mx.array(1.0e-6, dtype=mx.float32))
+                ).astype(mx.float32)
+
+        return usage_entropy_loss, commit_loss, transition_boundary_loss
+
+    def hardmax_structural_nextlat_loss_terms(
+        self,
+        aux: dict[str, mx.array | None],
+        target_ids: mx.array,
+        *,
+        token_weights: mx.array | None = None,
+    ) -> tuple[mx.array, mx.array]:
+        zero = mx.array(0.0, dtype=mx.float32)
+        if (
+            self.hardmax_struct_nextlat_state_proj is None
+            or self.hardmax_struct_nextlat_token_proj is None
+            or self.hardmax_struct_nextlat_head is None
+        ):
+            return zero, zero
+        structural_aux = aux.get("hardmax_structural")
+        if not isinstance(structural_aux, dict):
+            return zero, zero
+        struct_state = structural_aux.get("struct_state")
+        soft_usage = structural_aux.get("soft_usage")
+        state_index = structural_aux.get("state_index")
+        if struct_state is None or soft_usage is None or state_index is None:
+            return zero, zero
+        struct_state = strip_register_positions(
+            struct_state.astype(mx.float32),
+            self.num_registers,
+            layout=self.register_layout,
+            register_stride=self.register_stride,
+        )
+        soft_usage = strip_register_positions(
+            soft_usage.astype(mx.float32),
+            self.num_registers,
+            layout=self.register_layout,
+            register_stride=self.register_stride,
+        )
+        state_index = strip_register_positions(
+            state_index.astype(mx.int32),
+            self.num_registers,
+            layout=self.register_layout,
+            register_stride=self.register_stride,
+        )
+        if (
+            isinstance(struct_state, np.ndarray)
+            or isinstance(soft_usage, np.ndarray)
+            or isinstance(state_index, np.ndarray)
+            or int(struct_state.shape[1]) <= 1
+        ):
+            return zero, zero
+        current_state = struct_state[:, :-1, :]
+        next_usage = mx.stop_gradient(soft_usage[:, 1:, :].astype(mx.float32))
+        next_index = state_index[:, 1:].astype(mx.int32)
+        next_token_emb = mx.stop_gradient(self.tok_emb(target_ids[:, :-1].astype(mx.int32)).astype(mx.float32))
+        nextlat_hidden = mx.tanh(
+            self.hardmax_struct_nextlat_state_proj(current_state.astype(COMPUTE_DTYPE)).astype(mx.float32)
+            + self.hardmax_struct_nextlat_token_proj(next_token_emb.astype(COMPUTE_DTYPE)).astype(mx.float32)
+        )
+        nextlat_logits = self.hardmax_struct_nextlat_head(nextlat_hidden.astype(COMPUTE_DTYPE)).astype(mx.float32)
+        nextlat_log_probs = nextlat_logits - mx.logsumexp(nextlat_logits, axis=-1, keepdims=True)
+        nextlat_nll = -mx.sum(next_usage * nextlat_log_probs, axis=-1)
+        if token_weights is None:
+            nextlat_loss = mx.mean(nextlat_nll).astype(mx.float32)
+            nextlat_acc = mx.mean((mx.argmax(nextlat_logits, axis=-1).astype(mx.int32) == next_index).astype(mx.float32))
+        else:
+            weights = mx.maximum(token_weights[:, :-1].astype(mx.float32), mx.array(0.0, dtype=mx.float32))
+            denom = mx.maximum(mx.sum(weights), mx.array(1.0e-6, dtype=mx.float32))
+            nextlat_loss = (mx.sum(nextlat_nll.astype(mx.float32) * weights) / denom).astype(mx.float32)
+            acc = (mx.argmax(nextlat_logits, axis=-1).astype(mx.int32) == next_index).astype(mx.float32)
+            nextlat_acc = (mx.sum(acc * weights) / denom).astype(mx.float32)
+        return nextlat_loss, nextlat_acc.astype(mx.float32)
 
     def forward_hidden_with_aux(
         self,
@@ -3023,6 +3302,99 @@ class GPT(nn.Module):
             ))
         return mx.concatenate(parts, axis=0).reshape(target_ids.shape)
 
+    def argmax_pred_ids_from_hidden(
+        self,
+        hidden: mx.array,
+        target_shape: tuple[int, int],
+    ) -> mx.array:
+        x = hidden.reshape(-1, self.tok_emb.weight.shape[1])
+        if self.logit_chunk_tokens <= 0 or x.shape[0] <= self.logit_chunk_tokens:
+            logits_proj = x @ self.tok_emb.weight.astype(x.dtype).T if self.tie_embeddings else self.lm_head(x)
+            logits = self.softcap(logits_proj)
+            return mx.argmax(logits.astype(mx.float32), axis=-1).astype(mx.int32).reshape(target_shape)
+        pred_parts: list[mx.array] = []
+        n = int(x.shape[0])
+        for s in range(0, n, self.logit_chunk_tokens):
+            e = min(s + self.logit_chunk_tokens, n)
+            logits_proj = x[s:e] @ self.tok_emb.weight.astype(x.dtype).T if self.tie_embeddings else self.lm_head(x[s:e])
+            logits = self.softcap(logits_proj)
+            pred_parts.append(mx.argmax(logits.astype(mx.float32), axis=-1).astype(mx.int32))
+        return mx.concatenate(pred_parts, axis=0).reshape(target_shape)
+
+    def residual_novelty_token_weights(
+        self,
+        hidden: mx.array,
+        target_ids: mx.array,
+        config: ResidualNoveltyWeightingConfig | None,
+    ) -> tuple[mx.array | None, mx.array, mx.array, mx.array, mx.array]:
+        zero = mx.array(0.0, dtype=mx.float32)
+        one = mx.array(1.0, dtype=mx.float32)
+        if config is None or not config.enabled:
+            return None, zero, zero, one, zero
+        pred_ids = self.argmax_pred_ids_from_hidden(hidden, (int(target_ids.shape[0]), int(target_ids.shape[1])))
+        return argmax_residual_novelty_weights_from_ids(
+            pred_ids,
+            target_ids,
+            self.tok_emb.weight,
+            min_scale=float(config.min_scale),
+            max_scale=float(config.max_scale),
+            norm_epsilon=float(config.norm_epsilon),
+            default_scale=1.0,
+            ema_decay=float(config.ema_decay),
+        )
+
+    def predict_residual_error_from_hidden(self, hidden: mx.array) -> mx.array:
+        if self.residual_error_prior is None:
+            raise ValueError("Residual error prior is not available")
+        return self.residual_error_prior(hidden.astype(COMPUTE_DTYPE)).astype(mx.float32)
+
+    def target_residual_error_from_hidden(
+        self,
+        hidden: mx.array,
+        target_ids: mx.array,
+        *,
+        target_mode: str,
+    ) -> mx.array:
+        logits_proj = (
+            hidden @ self.tok_emb.weight.astype(hidden.dtype).T
+            if self.tie_embeddings
+            else self.lm_head(hidden)
+        )
+        logits = self.softcap(logits_proj).astype(mx.float32)
+        emb = self.tok_emb.weight.astype(mx.float32)
+        actual_embed = emb[target_ids.astype(mx.int32)]
+        if target_mode == "argmax":
+            pred_ids = mx.argmax(logits, axis=-1).astype(mx.int32)
+            predicted_embed = emb[pred_ids]
+            return (actual_embed - predicted_embed).astype(mx.float32)
+        probs = mx.softmax(logits, axis=-1)
+        expected_embed = probs @ emb
+        return (actual_embed - expected_embed).astype(mx.float32)
+
+    def residual_error_prior_loss_terms(
+        self,
+        hidden: mx.array,
+        target_ids: mx.array,
+        *,
+        token_weights: mx.array | None = None,
+    ) -> tuple[mx.array, mx.array, mx.array]:
+        zero = mx.array(0.0, dtype=mx.float32)
+        if not self.has_residual_error_prior():
+            return zero, zero, zero
+        predicted = self.predict_residual_error_from_hidden(hidden)
+        target = self.target_residual_error_from_hidden(
+            hidden,
+            target_ids,
+            target_mode=self._residual_error_prior_target_mode,
+        )
+        return residual_prediction_alignment_loss(
+            predicted,
+            target,
+            token_weights=token_weights,
+            cosine_weight=float(self._residual_error_prior_cosine_weight),
+            norm_epsilon=float(self._residual_error_prior_norm_epsilon),
+        )
+
     def continuation_hidden_and_token_nll(
         self,
         prefix_ids: mx.array,
@@ -3290,6 +3662,7 @@ class GPT(nn.Module):
         focal_max_multiplier: float = 4.0,
         token_weights: mx.array | None = None,
         context_delta_config: ContextDeltaWeightingConfig | None = None,
+        residual_novelty_config: ResidualNoveltyWeightingConfig | None = None,
         teacher_logits: mx.array | None = None,
         teacher_hidden: mx.array | None = None,
         ema_teacher_distill_weight: float = 0.0,
@@ -3298,7 +3671,7 @@ class GPT(nn.Module):
         early_exit_aux_weight_override: float | None = None,
         structural_branching_cfg: StructuralBranchingConfig | None = None,
         branch_plans: list[list[StructuralBranchPoint]] | None = None,
-    ) -> tuple[mx.array, mx.array, mx.array, mx.array, mx.array, mx.array, mx.array, mx.array, mx.array, mx.array, mx.array, mx.array, mx.array, mx.array, mx.array, mx.array, mx.array, mx.array, mx.array, mx.array, mx.array, mx.array, mx.array, mx.array, mx.array, mx.array]:
+    ) -> tuple[mx.array, ...]:
         effective_early_exit_weight = (
             self._early_exit_aux_weight
             if early_exit_aux_weight_override is None
@@ -3328,6 +3701,18 @@ class GPT(nn.Module):
                 context_delta_config,
             ),
         )
+        (
+            residual_novelty_weights,
+            residual_novelty_similarity,
+            residual_novelty_mean,
+            residual_novelty_weight_mean,
+            residual_novelty_valid_fraction,
+        ) = self.residual_novelty_token_weights(
+            final_hidden,
+            target_ids,
+            residual_novelty_config,
+        )
+        combined_token_weights = merge_token_weights(combined_token_weights, residual_novelty_weights)
         ce_loss = self.token_ce_from_hidden(
             final_hidden,
             target_ids,
@@ -3348,6 +3733,9 @@ class GPT(nn.Module):
         prosody_boundary_loss = mx.array(0.0, dtype=mx.float32)
         prosody_punctuation_loss = mx.array(0.0, dtype=mx.float32)
         prosody_quote_loss = mx.array(0.0, dtype=mx.float32)
+        residual_error_prior_loss = mx.array(0.0, dtype=mx.float32)
+        residual_error_prior_mse = mx.array(0.0, dtype=mx.float32)
+        residual_error_prior_cosine = mx.array(0.0, dtype=mx.float32)
         structural_branch_loss = mx.array(0.0, dtype=mx.float32)
         structural_branch_state_loss = mx.array(0.0, dtype=mx.float32)
         hardmax_balance_loss = mx.array(0.0, dtype=mx.float32)
@@ -3361,6 +3749,11 @@ class GPT(nn.Module):
         hardmax_boundary_loss = mx.array(0.0, dtype=mx.float32)
         hardmax_quote_loss = mx.array(0.0, dtype=mx.float32)
         hardmax_confidence_loss = mx.array(0.0, dtype=mx.float32)
+        hardmax_state_usage_entropy_loss = mx.array(0.0, dtype=mx.float32)
+        hardmax_state_commit_loss = mx.array(0.0, dtype=mx.float32)
+        hardmax_transition_boundary_loss = mx.array(0.0, dtype=mx.float32)
+        hardmax_nextlat_loss = mx.array(0.0, dtype=mx.float32)
+        hardmax_nextlat_acc = mx.array(0.0, dtype=mx.float32)
         if bool(self.early_exit_heads) and effective_early_exit_weight > 0.0:
             early_exit_hidden = captured.get(self._early_exit_layer_index)
             if early_exit_hidden is not None:
@@ -3383,6 +3776,16 @@ class GPT(nn.Module):
                     target_ids,
                     token_weights=combined_token_weights,
                 )
+        if self.has_residual_error_prior():
+            (
+                residual_error_prior_loss,
+                residual_error_prior_mse,
+                residual_error_prior_cosine,
+            ) = self.residual_error_prior_loss_terms(
+                final_hidden,
+                target_ids,
+                token_weights=combined_token_weights,
+            )
         if teacher_logits is not None and ema_teacher_distill_weight > 0.0:
             distill_loss = self.distill_kl_from_hidden(
                 final_hidden,
@@ -3417,6 +3820,26 @@ class GPT(nn.Module):
                     target_ids,
                     token_weights=combined_token_weights,
                 )
+            if (
+                self._hardmax_struct_state_usage_entropy_weight > 0.0
+                or self._hardmax_struct_state_commit_weight > 0.0
+                or self._hardmax_struct_transition_boundary_weight > 0.0
+            ):
+                (
+                    hardmax_state_usage_entropy_loss,
+                    hardmax_state_commit_loss,
+                    hardmax_transition_boundary_loss,
+                ) = self.hardmax_structural_anti_collapse_loss_terms(
+                    aux,
+                    target_ids,
+                    token_weights=combined_token_weights,
+                )
+            if self._hardmax_struct_nextlat_weight > 0.0:
+                hardmax_nextlat_loss, hardmax_nextlat_acc = self.hardmax_structural_nextlat_loss_terms(
+                    aux,
+                    target_ids,
+                    token_weights=combined_token_weights,
+                )
         if (
             structural_branching_cfg is not None
             and structural_branching_cfg.enabled
@@ -3436,10 +3859,15 @@ class GPT(nn.Module):
             + sparse_weight * sparse_loss
             + smooth_weight * smooth_loss
             + self._prosody_aux_weight * prosody_aux_loss
+            + self._residual_error_prior_weight * residual_error_prior_loss
             + self._hardmax_struct_usage_balance_weight * hardmax_balance_loss
             + self._hardmax_struct_diversity_weight * hardmax_diversity_loss
             + self._hardmax_struct_predict_weight * hardmax_pred_loss
             + self._hardmax_struct_confidence_weight * hardmax_confidence_loss
+            + self._hardmax_struct_state_usage_entropy_weight * hardmax_state_usage_entropy_loss
+            + self._hardmax_struct_state_commit_weight * hardmax_state_commit_loss
+            + self._hardmax_struct_transition_boundary_weight * hardmax_transition_boundary_loss
+            + self._hardmax_struct_nextlat_weight * hardmax_nextlat_loss
             + ema_teacher_distill_weight * distill_loss
             + teacher_hidden_distill_weight * hidden_distill_loss
             + (
@@ -3461,6 +3889,9 @@ class GPT(nn.Module):
             prosody_boundary_loss,
             prosody_punctuation_loss,
             prosody_quote_loss,
+            residual_error_prior_loss,
+            residual_error_prior_mse,
+            residual_error_prior_cosine,
             distill_loss,
             hidden_distill_loss,
             structural_branch_loss,
@@ -3476,6 +3907,15 @@ class GPT(nn.Module):
             hardmax_boundary_loss,
             hardmax_quote_loss,
             hardmax_confidence_loss,
+            hardmax_state_usage_entropy_loss,
+            hardmax_state_commit_loss,
+            hardmax_transition_boundary_loss,
+            hardmax_nextlat_loss,
+            hardmax_nextlat_acc,
+            residual_novelty_similarity,
+            residual_novelty_mean,
+            residual_novelty_weight_mean,
+            residual_novelty_valid_fraction,
         )
 
     def loss(self, input_ids: mx.array, target_ids: mx.array, operator_codes: mx.array | None = None) -> mx.array:
@@ -3740,6 +4180,7 @@ def exportable_flat_state(model: nn.Module) -> dict[str, mx.array]:
         if "prosody_boundary_head" not in k
         if "prosody_punctuation_head" not in k
         if "prosody_quote_head" not in k
+        if "residual_error_prior" not in k
     }
 
 
@@ -4388,6 +4829,76 @@ def build_teacher_args_from_env(
             "HARDMAX_STRUCT_ATTN_TAU_MIN",
             fallback.hardmax_struct_attn_tau_min,
         ),
+        hardmax_struct_init_path=_env_text(
+            env_payload,
+            "HARDMAX_STRUCT_INIT_PATH",
+            fallback.hardmax_struct_init_path,
+        ),
+        hardmax_struct_init_mode=_env_text(
+            env_payload,
+            "HARDMAX_STRUCT_INIT_MODE",
+            fallback.hardmax_struct_init_mode,
+        ),
+        hardmax_struct_statebook_freeze_steps=_env_int(
+            env_payload,
+            "HARDMAX_STRUCT_STATEBOOK_FREEZE_STEPS",
+            fallback.hardmax_struct_statebook_freeze_steps,
+        ),
+        transfer_init_path=_env_text(
+            env_payload,
+            "TRANSFER_INIT_PATH",
+            fallback.transfer_init_path,
+        ),
+        transfer_init_prefix=_env_text(
+            env_payload,
+            "TRANSFER_INIT_PREFIX",
+            fallback.transfer_init_prefix,
+        ),
+        transfer_init_reset_lm_head=_env_bool(
+            env_payload,
+            "TRANSFER_INIT_RESET_LM_HEAD",
+            fallback.transfer_init_reset_lm_head,
+        ),
+        transfer_init_freeze_steps=_env_int(
+            env_payload,
+            "TRANSFER_INIT_FREEZE_STEPS",
+            fallback.transfer_init_freeze_steps,
+        ),
+        transfer_init_grad_scale=_env_float(
+            env_payload,
+            "TRANSFER_INIT_GRAD_SCALE",
+            fallback.transfer_init_grad_scale,
+        ),
+        transfer_init_grad_scale_steps=_env_int(
+            env_payload,
+            "TRANSFER_INIT_GRAD_SCALE_STEPS",
+            fallback.transfer_init_grad_scale_steps,
+        ),
+        hardmax_struct_state_usage_entropy_weight=_env_float(
+            env_payload,
+            "HARDMAX_STRUCT_STATE_USAGE_ENTROPY_WEIGHT",
+            fallback.hardmax_struct_state_usage_entropy_weight,
+        ),
+        hardmax_struct_state_commit_weight=_env_float(
+            env_payload,
+            "HARDMAX_STRUCT_STATE_COMMIT_WEIGHT",
+            fallback.hardmax_struct_state_commit_weight,
+        ),
+        hardmax_struct_transition_boundary_weight=_env_float(
+            env_payload,
+            "HARDMAX_STRUCT_TRANSITION_BOUNDARY_WEIGHT",
+            fallback.hardmax_struct_transition_boundary_weight,
+        ),
+        hardmax_struct_simvq_enabled=_env_bool(
+            env_payload,
+            "HARDMAX_STRUCT_SIMVQ_ENABLED",
+            fallback.hardmax_struct_simvq_enabled,
+        ),
+        hardmax_struct_nextlat_weight=_env_float(
+            env_payload,
+            "HARDMAX_STRUCT_NEXTLAT_WEIGHT",
+            fallback.hardmax_struct_nextlat_weight,
+        ),
         early_exit_layer_index=_env_int(env_payload, "EARLY_EXIT_LAYER_INDEX", fallback.early_exit_layer_index),
         early_exit_horizons=_env_text(env_payload, "EARLY_EXIT_HORIZONS", fallback.early_exit_horizons),
         early_exit_aux_weight=_env_float(env_payload, "EARLY_EXIT_AUX_WEIGHT", fallback.early_exit_aux_weight),
@@ -4520,6 +5031,64 @@ def build_teacher_args_from_env(
             env_payload,
             "PROSODY_AUX_PUNCTUATION_WEIGHT",
             fallback.prosody_aux_punctuation_weight,
+        ),
+        residual_novelty_weighting_enabled=_env_bool(
+            env_payload,
+            "RESIDUAL_NOVELTY_WEIGHTING_ENABLED",
+            fallback.residual_novelty_weighting_enabled,
+        ),
+        residual_novelty_min_scale=_env_float(
+            env_payload,
+            "RESIDUAL_NOVELTY_MIN_SCALE",
+            fallback.residual_novelty_min_scale,
+        ),
+        residual_novelty_max_scale=_env_float(
+            env_payload,
+            "RESIDUAL_NOVELTY_MAX_SCALE",
+            fallback.residual_novelty_max_scale,
+        ),
+        residual_novelty_norm_epsilon=_env_float(
+            env_payload,
+            "RESIDUAL_NOVELTY_NORM_EPSILON",
+            fallback.residual_novelty_norm_epsilon,
+        ),
+        residual_novelty_ema_decay=_env_float(
+            env_payload,
+            "RESIDUAL_NOVELTY_EMA_DECAY",
+            fallback.residual_novelty_ema_decay,
+        ),
+        residual_error_prior_enabled=_env_bool(
+            env_payload,
+            "RESIDUAL_ERROR_PRIOR_ENABLED",
+            fallback.residual_error_prior_enabled,
+        ),
+        residual_error_prior_weight=_env_float(
+            env_payload,
+            "RESIDUAL_ERROR_PRIOR_WEIGHT",
+            fallback.residual_error_prior_weight,
+        ),
+        residual_error_prior_bottleneck_dim=_env_int(
+            env_payload,
+            "RESIDUAL_ERROR_PRIOR_BOTTLENECK_DIM",
+            fallback.residual_error_prior_bottleneck_dim,
+        ),
+        residual_error_prior_init_std=_env_float(
+            env_payload,
+            "RESIDUAL_ERROR_PRIOR_INIT_STD",
+            fallback.residual_error_prior_init_std,
+        ),
+        residual_error_prior_cosine_weight=_env_float(
+            env_payload,
+            "RESIDUAL_ERROR_PRIOR_COSINE_WEIGHT",
+            fallback.residual_error_prior_cosine_weight,
+        ),
+        residual_error_prior_norm_epsilon=_env_float(
+            env_payload,
+            "RESIDUAL_ERROR_PRIOR_NORM_EPSILON",
+            fallback.residual_error_prior_norm_epsilon,
+        ),
+        residual_error_prior_target_mode=str(
+            env_payload.get("RESIDUAL_ERROR_PRIOR_TARGET_MODE", fallback.residual_error_prior_target_mode)
         ),
     )
 
@@ -5173,6 +5742,11 @@ def loss_and_grad_chunked(
         "hardmax_boundary_loss": 0.0,
         "hardmax_quote_loss": 0.0,
         "hardmax_confidence_loss": 0.0,
+        "hardmax_state_usage_entropy_loss": 0.0,
+        "hardmax_state_commit_loss": 0.0,
+        "hardmax_transition_boundary_loss": 0.0,
+        "hardmax_nextlat_loss": 0.0,
+        "hardmax_nextlat_acc": 0.0,
         "early_exit_weight": 0.0,
         "branch_points": 0.0,
         "branch_budget": 0.0,
@@ -5195,6 +5769,13 @@ def loss_and_grad_chunked(
         "prosody_sentence_boundary_frac": 0.0,
         "prosody_paragraph_boundary_frac": 0.0,
         "prosody_state_delta_rms": 0.0,
+        "residual_error_prior_loss": 0.0,
+        "residual_error_prior_mse": 0.0,
+        "residual_error_prior_cosine": 0.0,
+        "residual_novelty_similarity": 0.0,
+        "residual_novelty_mean": 0.0,
+        "residual_novelty_weight": 0.0,
+        "residual_novelty_valid_frac": 0.0,
     } if collect_loss_components else None
     timing_totals = {
         "batch_ms": 0.0,
@@ -5458,6 +6039,9 @@ def loss_and_grad_chunked(
                 prosody_boundary_term,
                 prosody_punctuation_term,
                 prosody_quote_term,
+                residual_error_prior_term,
+                residual_error_prior_mse_term,
+                residual_error_prior_cosine_term,
                 distill_term,
                 hidden_distill_term,
                 branch_rank_term,
@@ -5473,6 +6057,15 @@ def loss_and_grad_chunked(
                 hardmax_boundary_term,
                 hardmax_quote_term,
                 hardmax_confidence_loss_term,
+                hardmax_state_usage_entropy_term,
+                hardmax_state_commit_term,
+                hardmax_transition_boundary_term,
+                hardmax_nextlat_term,
+                hardmax_nextlat_acc_term,
+                residual_novelty_similarity_term,
+                residual_novelty_mean_term,
+                residual_novelty_weight_term,
+                residual_novelty_valid_frac_term,
             ) = model.loss_terms(
                 x,
                 y,
@@ -5485,6 +6078,7 @@ def loss_and_grad_chunked(
                 focal_max_multiplier=focal_max_multiplier,
                 token_weights=token_weights,
                 context_delta_config=context_delta_config,
+                residual_novelty_config=residual_novelty_weighting_config(args),
                 teacher_logits=teacher_logits,
                 teacher_hidden=teacher_hidden,
                 ema_teacher_distill_weight=distill_weight,
@@ -5505,6 +6099,9 @@ def loss_and_grad_chunked(
                 prosody_boundary_term,
                 prosody_punctuation_term,
                 prosody_quote_term,
+                residual_error_prior_term,
+                residual_error_prior_mse_term,
+                residual_error_prior_cosine_term,
                 distill_term,
                 hidden_distill_term,
                 branch_rank_term,
@@ -5520,6 +6117,15 @@ def loss_and_grad_chunked(
                 hardmax_boundary_term,
                 hardmax_quote_term,
                 hardmax_confidence_loss_term,
+                hardmax_state_usage_entropy_term,
+                hardmax_state_commit_term,
+                hardmax_transition_boundary_term,
+                hardmax_nextlat_term,
+                hardmax_nextlat_acc_term,
+                residual_novelty_similarity_term,
+                residual_novelty_mean_term,
+                residual_novelty_weight_term,
+                residual_novelty_valid_frac_term,
             )
             component_totals["ce_loss"] += float(ce_term.item()) * scale
             component_totals["seed_loss"] += float(seed_term.item()) * scale
@@ -5531,6 +6137,9 @@ def loss_and_grad_chunked(
             component_totals["prosody_boundary_loss"] += float(prosody_boundary_term.item()) * scale
             component_totals["prosody_punctuation_loss"] += float(prosody_punctuation_term.item()) * scale
             component_totals["prosody_quote_loss"] += float(prosody_quote_term.item()) * scale
+            component_totals["residual_error_prior_loss"] += float(residual_error_prior_term.item()) * scale
+            component_totals["residual_error_prior_mse"] += float(residual_error_prior_mse_term.item()) * scale
+            component_totals["residual_error_prior_cosine"] += float(residual_error_prior_cosine_term.item()) * scale
             component_totals["distill_loss"] += float(distill_term.item()) * scale
             component_totals["hidden_distill_loss"] += float(hidden_distill_term.item()) * scale
             component_totals["branch_rank_loss"] += float(branch_rank_term.item()) * scale
@@ -5546,6 +6155,15 @@ def loss_and_grad_chunked(
             component_totals["hardmax_boundary_loss"] += float(hardmax_boundary_term.item()) * scale
             component_totals["hardmax_quote_loss"] += float(hardmax_quote_term.item()) * scale
             component_totals["hardmax_confidence_loss"] += float(hardmax_confidence_loss_term.item()) * scale
+            component_totals["hardmax_state_usage_entropy_loss"] += float(hardmax_state_usage_entropy_term.item()) * scale
+            component_totals["hardmax_state_commit_loss"] += float(hardmax_state_commit_term.item()) * scale
+            component_totals["hardmax_transition_boundary_loss"] += float(hardmax_transition_boundary_term.item()) * scale
+            component_totals["hardmax_nextlat_loss"] += float(hardmax_nextlat_term.item()) * scale
+            component_totals["hardmax_nextlat_acc"] += float(hardmax_nextlat_acc_term.item()) * scale
+            component_totals["residual_novelty_similarity"] += float(residual_novelty_similarity_term.item()) * scale
+            component_totals["residual_novelty_mean"] += float(residual_novelty_mean_term.item()) * scale
+            component_totals["residual_novelty_weight"] += float(residual_novelty_weight_term.item()) * scale
+            component_totals["residual_novelty_valid_frac"] += float(residual_novelty_valid_frac_term.item()) * scale
             component_totals["branch_aux_loss"] += (
                 float(branch_rank_term.item()) + float(branch_state_term.item())
             ) * scale
@@ -5559,6 +6177,10 @@ def loss_and_grad_chunked(
                 + float(hardmax_diversity_term.item())
                 + float(hardmax_pred_term.item())
                 + float(hardmax_confidence_loss_term.item())
+                + float(hardmax_state_usage_entropy_term.item())
+                + float(hardmax_state_commit_term.item())
+                + float(hardmax_transition_boundary_term.item())
+                + float(hardmax_nextlat_term.item())
             ) * scale
             if teacher_hidden_cache_metrics is not None:
                 component_totals["teacher_hidden_cache_hit_frac"] += float(teacher_hidden_cache_metrics["teacher_hidden_cache_hit_frac"]) * scale
@@ -5799,13 +6421,51 @@ def maybe_mask_hardmax_structural_statebook_grads(
     freeze_steps = max(int(getattr(args, "hardmax_struct_statebook_freeze_steps", 0)), 0)
     if freeze_steps <= 0 or step > freeze_steps:
         return flat_grads, ()
-    target_name = "hardmax_structural_controller.state_book"
-    grad = flat_grads.get(target_name)
-    if grad is None:
+    masked = dict(flat_grads)
+    applied: list[str] = []
+    for target_name in (
+        "hardmax_structural_controller.state_book",
+        "hardmax_structural_controller.state_book_proj.weight",
+    ):
+        grad = masked.get(target_name)
+        if grad is None:
+            continue
+        masked[target_name] = mx.zeros(grad.shape, dtype=grad.dtype)
+        applied.append(target_name)
+    if not applied:
+        return flat_grads, ()
+    return masked, tuple(applied)
+
+
+def maybe_mask_transfer_init_grads(
+    flat_grads: dict[str, mx.array],
+    args: Hyperparameters,
+    step: int,
+    target_names: tuple[str, ...],
+) -> tuple[dict[str, mx.array], tuple[str, ...]]:
+    freeze_steps = max(int(getattr(args, "transfer_init_freeze_steps", 0)), 0)
+    grad_scale = float(getattr(args, "transfer_init_grad_scale", 1.0))
+    scale_steps = int(getattr(args, "transfer_init_grad_scale_steps", 0))
+    scale_active = (
+        target_names
+        and abs(grad_scale - 1.0) > 1e-8
+        and (scale_steps <= 0 or step <= max(scale_steps, 0))
+    )
+    freeze_active = freeze_steps > 0 and step <= freeze_steps and bool(target_names)
+    if not freeze_active and not scale_active:
         return flat_grads, ()
     masked = dict(flat_grads)
-    masked[target_name] = mx.zeros(grad.shape, dtype=grad.dtype)
-    return masked, (target_name,)
+    applied: list[str] = []
+    for name in target_names:
+        grad = masked.get(name)
+        if grad is None:
+            continue
+        if freeze_active:
+            masked[name] = mx.zeros(grad.shape, dtype=grad.dtype)
+        else:
+            masked[name] = grad * mx.array(grad_scale, dtype=grad.dtype)
+        applied.append(name)
+    return masked, tuple(applied)
 
 
 def should_sanitize_nonfinite_grads(
@@ -5946,6 +6606,11 @@ def gpt_kwargs_from_args(
         "hardmax_struct_condition_mode": args.hardmax_struct_condition_mode,
         "hardmax_struct_attn_q_scale": args.hardmax_struct_attn_q_scale,
         "hardmax_struct_attn_tau_min": args.hardmax_struct_attn_tau_min,
+        "hardmax_struct_state_usage_entropy_weight": args.hardmax_struct_state_usage_entropy_weight,
+        "hardmax_struct_state_commit_weight": args.hardmax_struct_state_commit_weight,
+        "hardmax_struct_transition_boundary_weight": args.hardmax_struct_transition_boundary_weight,
+        "hardmax_struct_simvq_enabled": args.hardmax_struct_simvq_enabled,
+        "hardmax_struct_nextlat_weight": args.hardmax_struct_nextlat_weight,
         "prosody_type_embeddings_enabled": args.prosody_type_embeddings_enabled,
         "prosody_type_embedding_init_std": args.prosody_type_embedding_init_std,
         "prosody_extended_feature_set_enabled": args.prosody_extended_feature_set_enabled,
@@ -5965,6 +6630,13 @@ def gpt_kwargs_from_args(
         "prosody_aux_boundary_weight": args.prosody_aux_boundary_weight,
         "prosody_aux_quote_weight": args.prosody_aux_quote_weight,
         "prosody_aux_punctuation_weight": args.prosody_aux_punctuation_weight,
+        "residual_error_prior_enabled": args.residual_error_prior_enabled,
+        "residual_error_prior_weight": args.residual_error_prior_weight,
+        "residual_error_prior_bottleneck_dim": args.residual_error_prior_bottleneck_dim,
+        "residual_error_prior_init_std": args.residual_error_prior_init_std,
+        "residual_error_prior_cosine_weight": args.residual_error_prior_cosine_weight,
+        "residual_error_prior_norm_epsilon": args.residual_error_prior_norm_epsilon,
+        "residual_error_prior_target_mode": args.residual_error_prior_target_mode,
         "token_prosody_luts": None if sp is None else build_token_prosody_luts(
             sp,
             extended_binary_features=args.prosody_extended_feature_set_enabled,
@@ -6050,6 +6722,32 @@ def load_flat_npz_state(path: Path) -> dict[str, mx.array]:
     return {name: value for name, value in mx.load(str(path)).items()}
 
 
+def maybe_strip_checkpoint_prefix(
+    reference_state: dict[str, mx.array],
+    checkpoint_state: dict[str, mx.array],
+    *,
+    prefix: str,
+) -> tuple[dict[str, mx.array], str]:
+    normalized_prefix = prefix.strip()
+    if not normalized_prefix:
+        return checkpoint_state, ""
+    original_overlap = sum(1 for name in checkpoint_state if name in reference_state)
+    stripped_state: dict[str, mx.array] = {}
+    stripped_any = False
+    for name, value in checkpoint_state.items():
+        if str(name).startswith(normalized_prefix):
+            stripped_state[str(name)[len(normalized_prefix) :]] = value
+            stripped_any = True
+        else:
+            stripped_state[str(name)] = value
+    if not stripped_any:
+        return checkpoint_state, ""
+    stripped_overlap = sum(1 for name in stripped_state if name in reference_state)
+    if stripped_overlap <= original_overlap:
+        return checkpoint_state, ""
+    return stripped_state, normalized_prefix
+
+
 def select_hardmax_structural_init_state(
     model: nn.Module,
     checkpoint_state: dict[str, mx.array],
@@ -6074,6 +6772,7 @@ def select_hardmax_structural_init_state(
             "recur.weight",
             "state_logits.weight",
             "state_book",
+            "state_book_proj.weight",
         }
     else:
         raise ValueError(f"Unsupported HARDMAX_STRUCT_INIT_MODE {mode!r}; expected one of: full, state_book, core.")
@@ -6177,6 +6876,75 @@ def maybe_initialize_hardmax_structural_controller(
         "path": str(init_path),
         **stats,
     }
+
+
+def maybe_initialize_transfer_backbone(
+    model: nn.Module,
+    args: Hyperparameters,
+    *,
+    log_fn=print,
+) -> tuple[dict[str, object] | None, tuple[str, ...]]:
+    init_path_raw = args.transfer_init_path.strip()
+    if not init_path_raw:
+        return None, ()
+    init_path = Path(init_path_raw).expanduser()
+    if not init_path.is_absolute():
+        init_path = (Path.cwd() / init_path).resolve()
+    if init_path.suffix.lower() != ".npz":
+        raise ValueError(f"TRANSFER_INIT_PATH must point to an .npz file, got {init_path}")
+    if not init_path.is_file():
+        raise FileNotFoundError(f"Transfer init artifact not found: {init_path}")
+    checkpoint_state = load_flat_npz_state(init_path)
+    reference_state = flat_parameter_state(model)
+    normalized_state, stripped_prefix = maybe_strip_checkpoint_prefix(
+        reference_state,
+        checkpoint_state,
+        prefix=args.transfer_init_prefix,
+    )
+    selected_state, stats = select_compatible_flat_state(model, normalized_state)
+    reset_tensor_count = 0
+    if args.transfer_init_reset_lm_head:
+        reset_targets = [name for name in selected_state if name.startswith("lm_head.")]
+        if reset_targets:
+            selected_state = {name: value for name, value in selected_state.items() if name not in reset_targets}
+            reset_tensor_count = len(reset_targets)
+    if not selected_state:
+        raise ValueError(
+            "Transfer init matched zero tensors. "
+            f"path={init_path} stripped_prefix={stripped_prefix or 'none'} "
+            f"missing={stats['missing_tensors']} mismatched={stats['mismatched_tensors']}"
+        )
+    apply_flat_arrays(model, selected_state)
+    if hasattr(model, "clear_turbo_cache"):
+        model.clear_turbo_cache()
+    matched_names = tuple(sorted(selected_state))
+    matched_params = int(sum(int(np.prod(value.shape)) for value in selected_state.values()))
+    applied_param_fraction = matched_params / max(int(stats["total_params"]), 1)
+    log_fn(
+        "transfer_init:"
+        f"applied path:{init_path} "
+        f"stripped_prefix:{stripped_prefix or 'none'} "
+        f"matched_tensors:{len(selected_state)} "
+        f"coverage:{applied_param_fraction:.3f} "
+        f"reset_lm_head:{int(args.transfer_init_reset_lm_head)} "
+        f"freeze_steps:{max(int(args.transfer_init_freeze_steps), 0)} "
+        f"missing:{int(stats['missing_tensors'])} mismatched:{int(stats['mismatched_tensors'])}"
+    )
+    return (
+        {
+            "path": str(init_path),
+            "stripped_prefix": stripped_prefix,
+            "matched_tensors": len(selected_state),
+            "matched_params": matched_params,
+            "applied_param_fraction": applied_param_fraction,
+            "reset_lm_head": bool(args.transfer_init_reset_lm_head),
+            "reset_lm_head_skipped_tensors": reset_tensor_count,
+            "freeze_steps": max(int(args.transfer_init_freeze_steps), 0),
+            "missing_tensors": int(stats["missing_tensors"]),
+            "mismatched_tensors": int(stats["mismatched_tensors"]),
+        },
+        matched_names,
+    )
 
 
 def init_ema_state(model: nn.Module) -> dict[str, mx.array]:
@@ -6392,9 +7160,23 @@ def logic_gate_metrics(model: nn.Module) -> dict[str, float]:
 def hardmax_structural_metrics(model: nn.Module) -> dict[str, float]:
     controller = getattr(model, "hardmax_structural_controller", None)
     if controller is None:
-        return {"gate_rms": 0.0, "gate_max_abs": 0.0, "book_offdiag_cos": 0.0, "temperature": 0.0}
+        return {
+            "gate_rms": 0.0,
+            "gate_max_abs": 0.0,
+            "book_offdiag_cos": 0.0,
+            "book_anchor_rmse": 0.0,
+            "book_reparam_rmse": 0.0,
+            "temperature": 0.0,
+        }
     gate_np = np.asarray(mx.tanh(controller.gate).astype(mx.float32), dtype=np.float32)
-    book_np = np.asarray(controller.state_book.astype(mx.float32), dtype=np.float32)
+    effective_book = (
+        controller.effective_state_book().astype(mx.float32)
+        if hasattr(controller, "effective_state_book")
+        else controller.state_book.astype(mx.float32)
+    )
+    book_np = np.asarray(effective_book, dtype=np.float32)
+    raw_book_np = np.asarray(controller.state_book.astype(mx.float32), dtype=np.float32)
+    anchor_np = getattr(model, "_hardmax_struct_statebook_anchor_np", None)
     if book_np.size <= 0:
         offdiag_cos = 0.0
     else:
@@ -6408,6 +7190,16 @@ def hardmax_structural_metrics(model: nn.Module) -> dict[str, float]:
         "gate_rms": float(np.sqrt(np.square(gate_np, dtype=np.float64).mean())) if gate_np.size > 0 else 0.0,
         "gate_max_abs": float(np.abs(gate_np, dtype=np.float32).max(initial=0.0)) if gate_np.size > 0 else 0.0,
         "book_offdiag_cos": offdiag_cos,
+        "book_anchor_rmse": (
+            float(np.sqrt(np.square(book_np - anchor_np, dtype=np.float64).mean()))
+            if isinstance(anchor_np, np.ndarray) and anchor_np.shape == book_np.shape
+            else 0.0
+        ),
+        "book_reparam_rmse": (
+            float(np.sqrt(np.square(book_np - raw_book_np, dtype=np.float64).mean()))
+            if raw_book_np.shape == book_np.shape
+            else 0.0
+        ),
         "temperature": float(getattr(controller, "temperature", 0.0)),
     }
 
@@ -6496,6 +7288,7 @@ def main() -> None:
         )
     token_category_luts = build_token_category_luts(sp) if args.curriculum_token_category_weighting else None
     context_delta_cfg = context_delta_weighting_config(args)
+    residual_novelty_cfg = residual_novelty_weighting_config(args)
     structural_branch_cfg = structural_branching_config(args)
     structural_branch_budget_ctrl = structural_branch_budget_controller(args)
     early_exit_budget_ctrl = early_exit_budget_controller(args)
@@ -6543,6 +7336,9 @@ def main() -> None:
     model = make_gpt(args, sp)
     model.set_turbo_qat(False, 0.0)
     hardmax_init_stats = maybe_initialize_hardmax_structural_controller(model, args, log_fn=log)
+    transfer_init_stats, transfer_init_mask_names = maybe_initialize_transfer_backbone(model, args, log_fn=log)
+    if hasattr(model, "capture_hardmax_structural_statebook_anchor"):
+        model.capture_hardmax_structural_statebook_anchor()
     opt = SplitOptimizers(model, args)
     ema_group_map = build_ema_group_map(opt, model)
     ema_state = init_ema_state(model) if args.ema_enabled and args.ema_start_frac <= 0.0 else None
@@ -6583,6 +7379,9 @@ def main() -> None:
     uses_logic = model.logic_sidecar is not None or model.hardmax_structural_controller is not None
     if compiled and model.hardmax_structural_controller is not None:
         log("mlx_compile:disable reason:hardmax_structural_controller_python_loop")
+        compiled = False
+    if compiled and residual_novelty_cfg.enabled:
+        log("mlx_compile:disable reason:residual_novelty_weighting")
         compiled = False
     if compiled:
         if uses_logic:
@@ -6682,7 +7481,20 @@ def main() -> None:
         f"init_path:{args.hardmax_struct_init_path or 'off'} "
         f"statebook_freeze:{args.hardmax_struct_statebook_freeze_steps} "
         f"usage_w:{args.hardmax_struct_usage_balance_weight:.6f} div_w:{args.hardmax_struct_diversity_weight:.6f} "
-        f"pred_w:{args.hardmax_struct_predict_weight:.6f} conf_w:{args.hardmax_struct_confidence_weight:.6f}"
+        f"pred_w:{args.hardmax_struct_predict_weight:.6f} conf_w:{args.hardmax_struct_confidence_weight:.6f} "
+        f"usage_H_w:{args.hardmax_struct_state_usage_entropy_weight:.6f} "
+        f"commit_w:{args.hardmax_struct_state_commit_weight:.6f} "
+        f"trans_bnd_w:{args.hardmax_struct_transition_boundary_weight:.6f} "
+        f"simvq:{int(args.hardmax_struct_simvq_enabled)} "
+        f"nextlat_w:{args.hardmax_struct_nextlat_weight:.6f}"
+    )
+    log(
+        f"transfer_init:path:{args.transfer_init_path or 'off'} "
+        f"prefix:{args.transfer_init_prefix or 'off'} "
+        f"reset_lm_head:{int(args.transfer_init_reset_lm_head)} "
+        f"freeze_steps:{args.transfer_init_freeze_steps} "
+        f"grad_scale:{args.transfer_init_grad_scale:.4f} "
+        f"grad_scale_steps:{args.transfer_init_grad_scale_steps}"
     )
     log(
         f"iterations:{args.iterations} train_batch_tokens:{args.train_batch_tokens} grad_accum_steps:{args.grad_accum_steps} "
@@ -6762,6 +7574,20 @@ def main() -> None:
             f"max_multiplier:{context_delta_cfg.max_multiplier:.3f} "
             f"power:{context_delta_cfg.score_power:.3f} "
             f"use_abs:{int(context_delta_cfg.use_absolute_delta)}"
+        )
+    if residual_novelty_cfg.enabled:
+        log(
+            f"residual_novelty_weighting:enabled min_scale:{residual_novelty_cfg.min_scale:.3f} "
+            f"max_scale:{residual_novelty_cfg.max_scale:.3f} "
+            f"norm_eps:{residual_novelty_cfg.norm_epsilon:.2e}"
+        )
+    if model.has_residual_error_prior():
+        log(
+            f"residual_error_prior:enabled weight:{model._residual_error_prior_weight:.6f} "
+            f"bottleneck:{model._residual_error_prior_bottleneck_dim} "
+            f"cos_w:{model._residual_error_prior_cosine_weight:.3f} "
+            f"norm_eps:{model._residual_error_prior_norm_epsilon:.2e} "
+            f"target_mode:{model._residual_error_prior_target_mode}"
         )
     if structural_branch_cfg.enabled:
         log(
@@ -7205,6 +8031,7 @@ def main() -> None:
             or needs_dynamic_logic
             or needs_token_category_weighting
             or needs_context_delta_weighting
+            or residual_novelty_cfg.enabled
             or structural_branching_active
             or teacher_distill_active
             or teacher_hidden_distill_weight > 0.0
@@ -7224,6 +8051,7 @@ def main() -> None:
                         focal_max_multiplier=args.curriculum_focal_max_multiplier,
                         token_weights=token_weights_inner,
                         context_delta_config=context_delta_cfg,
+                        residual_novelty_config=residual_novelty_cfg,
                         teacher_logits=teacher_logits_inner,
                         teacher_hidden=teacher_hidden_inner,
                         ema_teacher_distill_weight=distill_weight,
@@ -7245,6 +8073,7 @@ def main() -> None:
                         focal_max_multiplier=args.curriculum_focal_max_multiplier,
                         token_weights=token_weights_inner,
                         context_delta_config=context_delta_cfg,
+                        residual_novelty_config=residual_novelty_cfg,
                         teacher_logits=teacher_logits_inner,
                         teacher_hidden=teacher_hidden_inner,
                         ema_teacher_distill_weight=distill_weight,
@@ -7360,12 +8189,18 @@ def main() -> None:
         grads = clip_grad_tree(grads, args.grad_clip_norm)
         clip_ms = 1000.0 * (time.perf_counter() - clip_t0)
         flat_clipped_grads = dict(tree_flatten(grads))
+        flat_clipped_grads, masked_transfer_grad_names = maybe_mask_transfer_init_grads(
+            flat_clipped_grads,
+            args,
+            step,
+            transfer_init_mask_names,
+        )
         flat_clipped_grads, masked_grad_names = maybe_mask_hardmax_structural_statebook_grads(
             flat_clipped_grads,
             args,
             step,
         )
-        if masked_grad_names:
+        if masked_transfer_grad_names or masked_grad_names:
             grads = tree_unflatten(list(flat_clipped_grads.items()))
         grad_group_cos = gradient_group_cosines(flat_clipped_grads, prev_flat_grads, opt)
         beta = min(max(args.ema_grad_ac_beta, 0.0), 0.9999)
@@ -7596,6 +8431,9 @@ def main() -> None:
                     f" train_prosody_bnd:{component_metrics['prosody_boundary_loss']:.4f}"
                     f" train_prosody_punct:{component_metrics['prosody_punctuation_loss']:.4f}"
                     f" train_prosody_q:{component_metrics['prosody_quote_loss']:.4f}"
+                    f" train_errprior:{component_metrics['residual_error_prior_loss']:.4f}"
+                    f" train_errprior_mse:{component_metrics['residual_error_prior_mse']:.4f}"
+                    f" errprior_cos:{component_metrics['residual_error_prior_cosine']:.3f}"
                     f" train_distill:{component_metrics['distill_loss']:.4f}"
                     f" train_hidden_distill:{component_metrics['hidden_distill_loss']:.4f}"
                     f" earlyexit_w:{component_metrics['early_exit_weight']:.4f}"
@@ -7610,6 +8448,11 @@ def main() -> None:
                     f" train_hardmax_cls:{component_metrics['hardmax_token_class_loss']:.4f}"
                     f" train_hardmax_bnd:{component_metrics['hardmax_boundary_loss']:.4f}"
                     f" train_hardmax_q:{component_metrics['hardmax_quote_loss']:.4f}"
+                    f" train_hardmax_usage_H:{component_metrics['hardmax_state_usage_entropy_loss']:.4f}"
+                    f" train_hardmax_commit:{component_metrics['hardmax_state_commit_loss']:.4f}"
+                    f" train_hardmax_trans_bnd:{component_metrics['hardmax_transition_boundary_loss']:.4f}"
+                    f" train_hardmax_nextlat:{component_metrics['hardmax_nextlat_loss']:.4f}"
+                    f" hardmax_nextlat_acc:{component_metrics['hardmax_nextlat_acc']:.3f}"
                     f" hardmax_conf:{component_metrics['hardmax_confidence']:.3f}"
                     f" hardmax_budget:{component_metrics['hardmax_budget']:.3f}"
                     f" hardmax_H:{component_metrics['hardmax_entropy']:.3f}"
@@ -7634,6 +8477,10 @@ def main() -> None:
                     f" prosody_sent_frac:{component_metrics['prosody_sentence_boundary_frac']:.3f}"
                     f" prosody_para_frac:{component_metrics['prosody_paragraph_boundary_frac']:.3f}"
                     f" prosody_state_rms:{component_metrics['prosody_state_delta_rms']:.5f}"
+                    f" residnov_sim:{component_metrics['residual_novelty_similarity']:.3f}"
+                    f" residnov_mean:{component_metrics['residual_novelty_mean']:.3f}"
+                    f" residnov_w:{component_metrics['residual_novelty_weight']:.3f}"
+                    f" residnov_valid:{component_metrics['residual_novelty_valid_frac']:.3f}"
                 )
             controller_metrics_str = ""
             if controller_runtime_enabled:
@@ -7708,6 +8555,8 @@ def main() -> None:
                 f"hardmax_gate_rms:{hardmax_metrics['gate_rms']:.6e} "
                 f"hardmax_gate_max_abs:{hardmax_metrics['gate_max_abs']:.6e} "
                 f"hardmax_book_cos:{hardmax_metrics['book_offdiag_cos']:.6f} "
+                f"hardmax_book_anchor_rmse:{hardmax_metrics['book_anchor_rmse']:.6e} "
+                f"hardmax_book_reparam_rmse:{hardmax_metrics['book_reparam_rmse']:.6e} "
                 f"hardmax_temp:{hardmax_metrics['temperature']:.4f}"
                 f"{grad_mask_str}"
                 f"{grad_nonfinite_str}"

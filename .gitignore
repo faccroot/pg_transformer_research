@@ -53,3 +53,7 @@ research/representation_learning/generated/
 research/representation_learning/priors/
 research/representation_learning/reports/
 research/representation_learning/runs/
+research/branch_memory/nodes/
+research/branch_memory/derived/
+research/branch_memory/*.log
+research/iterations/derived/

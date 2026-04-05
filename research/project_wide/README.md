@@ -15,6 +15,7 @@ Current contents:
 - `autonomous_architecture_execution_plan_20260330.md`: the long-running execution plan for architecture work, result analysis, implementation cleanup, and autonomous stop/go rules across the mainline, branching, sidecar, and eval-adaptation lanes.
 - `sidecar_canonicalization_plan_20260330.md`: the canonical sidecar decision, why chunk-causal is the main line, what remains research-only, and how future sidecar work should be routed.
 - `residual_autocorrelation_framework_20260330.md`: residual-direction autocorrelation for saved language-model artifacts, regime-split ACF, transition examples, and how to interpret persistent residual structure.
+- `residual_feedback_lane_20260404.md`: factorized residual ACF plus the first cheap residual-feedback training intervention via novelty-weighted token loss.
 - `fineweb_prosody_diagnostics_lane_20260331.md`: the first FineWeb text-native prosody analysis lane, including token-class loss decomposition, boundary-conditioned loss, and lightweight hidden-state probes for quote/boundary state.
 - `fineweb_prosody_feature_state_lane_20260401.md`: the stronger FineWeb prosody architecture lane, including factorized token features, the exportable prosody state adapter, and the linked ablation ladder.
 

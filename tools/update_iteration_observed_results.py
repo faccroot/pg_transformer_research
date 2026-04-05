@@ -24,7 +24,14 @@ except ModuleNotFoundError:
 
 
 LOG_SUFFIX = ".txt"
-MODEL_SUFFIXES = ("_mlx_model.npz", "_mlx_model.int8.ptz", "_int8zlib.pklz")
+ARTIFACT_SUFFIXES = (
+    "_mlx_model.npz",
+    "_mlx_model.int8.ptz",
+    "_int8zlib.pklz",
+    "_trace_pretrain_model.npz",
+    "_hardmax_controller_init.npz",
+    ".summary.json",
+)
 EMBEDDED_LOG_RE = re.compile(r"^logs/(?P<name>[^/\s]+\.txt)\s*$")
 
 
@@ -271,6 +278,30 @@ def compact_val_row(row: dict[str, object] | None) -> dict[str, object] | None:
     return out or None
 
 
+def compact_trace_pretrain_metrics(row: dict[str, object] | None) -> dict[str, object] | None:
+    if row is None:
+        return None
+    out: dict[str, object] = {}
+    for key in (
+        "loss",
+        "opcode_acc",
+        "step_acc",
+        "write_acc",
+        "read_acc",
+        "stack_depth_acc",
+        "env_size_acc",
+        "branch_acc",
+        "delta_acc",
+        "output_acc",
+        "confidence_mean",
+        "hard_usage_peak_frac",
+        "soft_usage_perplexity",
+    ):
+        if key in row:
+            out[key] = row[key]
+    return out or None
+
+
 def normalize_status(raw_status: str, *, has_final: bool, has_partial_final: bool, has_progress: bool) -> str:
     if has_final:
         return "observed_final"
@@ -294,6 +325,8 @@ def normalize_status(raw_status: str, *, has_final: bool, has_partial_final: boo
 def observation_score(payload: dict[str, object]) -> int:
     if isinstance(payload.get("final_int8_zlib_roundtrip_exact"), dict):
         return 3
+    if isinstance(payload.get("final_trace_pretrain_best_val"), dict):
+        return 3
     if isinstance(payload.get("final_raw_export_ready_exact"), dict):
         return 2
     if isinstance(payload.get("latest_observed_train"), dict) or isinstance(payload.get("latest_observed_val"), dict):
@@ -316,6 +349,8 @@ def merge_run_payload(existing: dict[str, object] | None, new: dict[str, object]
     observation_keys = (
         "final_int8_zlib_roundtrip_exact",
         "final_raw_export_ready_exact",
+        "final_trace_pretrain_best_val",
+        "final_trace_pretrain_train",
         "latest_observed_train",
         "latest_observed_val",
     )
@@ -327,7 +362,9 @@ def merge_run_payload(existing: dict[str, object] | None, new: dict[str, object]
         for key in observation_keys:
             if key in existing and key not in new:
                 merged[key] = existing[key]
-    has_final = isinstance(merged.get("final_int8_zlib_roundtrip_exact"), dict)
+    has_final = isinstance(merged.get("final_int8_zlib_roundtrip_exact"), dict) or isinstance(
+        merged.get("final_trace_pretrain_best_val"), dict
+    )
     has_partial_final = isinstance(merged.get("final_raw_export_ready_exact"), dict)
     has_progress = isinstance(merged.get("latest_observed_train"), dict) or isinstance(merged.get("latest_observed_val"), dict)
     merged["status"] = normalize_status(
@@ -377,14 +414,31 @@ def build_observed_results(iteration_dir: Path, *, check_remote: bool, search_ro
         latest_train = compact_train_row(latest_metric_row(parsed.get("train")) if parsed is not None else None)
         latest_val = compact_val_row(latest_metric_row(parsed.get("val")) if parsed is not None else None)
         artifact_paths: dict[str, str] = {}
-        for suffix in MODEL_SUFFIXES:
+        for suffix in ARTIFACT_SUFFIXES:
             found = discover_named_file(entry, search_roots=search_roots, suffix=suffix)
             if found is not None:
                 artifact_paths[suffix] = str(found)
+        trace_summary_path = artifact_paths.get(".summary.json")
+        trace_summary_payload: dict[str, object] | None = None
+        if trace_summary_path:
+            try:
+                maybe_summary = load_json(Path(trace_summary_path))
+                if isinstance(maybe_summary, dict) and (
+                    isinstance(maybe_summary.get("best_val"), dict) or isinstance(maybe_summary.get("final_train"), dict)
+                ):
+                    trace_summary_payload = maybe_summary
+            except (OSError, json.JSONDecodeError):
+                trace_summary_payload = None
+        trace_best_val = compact_trace_pretrain_metrics(
+            trace_summary_payload.get("best_val") if isinstance(trace_summary_payload, dict) else None
+        )
+        trace_final_train = compact_trace_pretrain_metrics(
+            trace_summary_payload.get("final_train") if isinstance(trace_summary_payload, dict) else None
+        )
 
         status = normalize_status(
             str(row.get("status", "")),
-            has_final=isinstance(final_exact, dict),
+            has_final=isinstance(final_exact, dict) or trace_best_val is not None,
             has_partial_final=isinstance(final_raw, dict),
             has_progress=latest_train is not None or latest_val is not None,
         )
@@ -404,6 +458,10 @@ def build_observed_results(iteration_dir: Path, *, check_remote: bool, search_ro
                     best_final = candidate
         if isinstance(final_raw, dict):
             payload["final_raw_export_ready_exact"] = final_raw
+        if trace_best_val is not None:
+            payload["final_trace_pretrain_best_val"] = trace_best_val
+        if trace_final_train is not None:
+            payload["final_trace_pretrain_train"] = trace_final_train
         if latest_train is not None:
             payload["latest_observed_train"] = latest_train
         if latest_val is not None:
@@ -479,6 +537,16 @@ def write_observed_summary(iteration_dir: Path, payload: dict[str, object]) -> P
             metric = f" final_int8_bpb={float(final_exact['val_bpb']):.6f}"
         elif isinstance(raw_exact, dict) and "val_bpb" in raw_exact:
             metric = f" final_raw_bpb={float(raw_exact['val_bpb']):.6f}"
+        elif isinstance(value.get("final_trace_pretrain_best_val"), dict):
+            trace_best = value["final_trace_pretrain_best_val"]
+            loss = trace_best.get("loss")
+            opcode_acc = trace_best.get("opcode_acc")
+            pieces: list[str] = []
+            if isinstance(loss, (int, float)):
+                pieces.append(f"trace_val_loss={float(loss):.6f}")
+            if isinstance(opcode_acc, (int, float)):
+                pieces.append(f"trace_opcode_acc={float(opcode_acc):.6f}")
+            metric = f" {' '.join(pieces)}" if pieces else ""
         else:
             latest_val = value.get("latest_observed_val")
             metric = ""

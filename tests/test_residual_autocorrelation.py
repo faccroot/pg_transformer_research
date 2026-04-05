@@ -7,6 +7,7 @@ from residual_autocorrelation import (
     cosine_acf,
     detect_regime_segments,
     expected_embedding_residuals,
+    factorize_residual_pca,
     scalar_acf,
     transition_window_mask,
 )
@@ -82,6 +83,17 @@ class ResidualAutocorrelationTests(unittest.TestCase):
         mask = transition_window_mask(10, np.array([2, 7], dtype=np.int32), window=2)
         expected = np.array([False, False, True, True, False, False, False, True, True, False], dtype=np.bool_)
         np.testing.assert_array_equal(mask, expected)
+
+    def test_factorize_residual_pca_recovers_rank1_direction(self) -> None:
+        base = np.array([1.0, -2.0, 0.5], dtype=np.float32)
+        coeffs = np.array([-2.0, -1.0, 0.0, 1.0, 2.0], dtype=np.float32)
+        vecs = coeffs[:, None] * base[None, :]
+        factored = factorize_residual_pca(vecs, max_factors=2)
+        self.assertEqual(tuple(factored["scores"].shape), (5, 2))
+        self.assertGreater(float(factored["explained_variance_ratio"][0]), 0.99)
+        lead = np.asarray(factored["components"][0], dtype=np.float32)
+        cosine = float(np.dot(lead, base) / (np.linalg.norm(lead) * np.linalg.norm(base)))
+        self.assertGreater(abs(cosine), 0.99)
 
 
 if __name__ == "__main__":

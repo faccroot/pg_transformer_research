@@ -408,6 +408,8 @@ def prepare_sweep(spec: dict, spec_path: Path, out_dir: Path) -> tuple[Path, Pat
         dispatch_q = shlex.quote(str(manifest["dispatch_script"]))
         recover_tool_q = shlex.quote(str(ROOT / "tools" / "recover_iteration_cluster_artifacts.py"))
         observed_tool_q = shlex.quote(str(ROOT / "tools" / "update_iteration_observed_results.py"))
+        runtime_tool_q = shlex.quote(str(ROOT / "tools" / "update_iteration_runtime_index.py"))
+        branch_memory_tool_q = shlex.quote(str(ROOT / "tools" / "branch_memoryctl.py"))
         iteration_dir_q = shlex.quote(str(out_dir))
         dispatch_log_q = shlex.quote(str(out_dir / "dispatch.out"))
         support_q = " ".join(shlex.quote(str(path)) for path in support_files)
@@ -454,6 +456,8 @@ def prepare_sweep(spec: dict, spec_path: Path, out_dir: Path) -> tuple[Path, Pat
                 f'ITERATION_DIR={iteration_dir_q}\n'
                 f'RECOVER_TOOL={recover_tool_q}\n'
                 f'OBSERVED_TOOL={observed_tool_q}\n'
+                f'RUNTIME_TOOL={runtime_tool_q}\n'
+                f'BRANCH_MEMORY_TOOL={branch_memory_tool_q}\n'
                 f'CONFIG_DIR={shlex.quote(str(configs_dir))}\n'
                 f'QUEUE_PARALLELISM={queue_parallelism_q}\n'
                 f'QUEUE_RETRY_ATTEMPTS={queue_retry_attempts_q}\n'
@@ -462,15 +466,60 @@ def prepare_sweep(spec: dict, spec_path: Path, out_dir: Path) -> tuple[Path, Pat
                 'mkdir -p "$(dirname "$DISPATCH_LOG")"\n'
                 'exec > >(tee -a "$DISPATCH_LOG") 2>&1\n\n'
                 'configs=("$CONFIG_DIR"/*.json)\n'
+                'run_has_completed_outputs() {\n'
+                '  local config=$1\n'
+                '  python3 - "$ITERATION_DIR" "$config" <<\'PY\'\n'
+                'import json\n'
+                'import sys\n'
+                'from pathlib import Path\n'
+                '\n'
+                'iteration_dir = Path(sys.argv[1])\n'
+                'config_path = Path(sys.argv[2])\n'
+                'config = json.loads(config_path.read_text(encoding="utf-8"))\n'
+                'run_slug = str(config.get("slug") or config_path.stem.split("_", 1)[-1])\n'
+                'run_id = str((config.get("env") or {}).get("RUN_ID") or "")\n'
+                '\n'
+                'observed_path = iteration_dir / "observed_results.json"\n'
+                'if observed_path.is_file():\n'
+                '    try:\n'
+                '        observed = json.loads(observed_path.read_text(encoding="utf-8"))\n'
+                '    except Exception:\n'
+                '        observed = {}\n'
+                '    run_payload = ((observed.get("runs") or {}).get(run_slug) or {})\n'
+                '    if run_payload.get("final_int8_zlib_roundtrip_exact") or run_payload.get("final_raw_export_ready_exact"):\n'
+                '        raise SystemExit(0)\n'
+                '    if str(run_payload.get("status") or "") in {"observed_final", "observed_partial_final"}:\n'
+                '        raise SystemExit(0)\n'
+                '\n'
+                'artifacts_dir = iteration_dir / "artifacts"\n'
+                'if run_id and artifacts_dir.is_dir():\n'
+                '    expected = [\n'
+                '        artifacts_dir / f"{run_id}_mlx_model.npz",\n'
+                '        artifacts_dir / f"{run_id}_mlx_model.int8.ptz",\n'
+                '        artifacts_dir / f"{run_id}.txt",\n'
+                '    ]\n'
+                '    if any(path.exists() for path in expected):\n'
+                '        raise SystemExit(0)\n'
+                '\n'
+                'raise SystemExit(1)\n'
+                'PY\n'
+                '}\n\n'
                 'post_run() {\n'
                 f'  python3 "$RECOVER_TOOL" "$ITERATION_DIR" --skip-existing {recover_post_args_q} >/dev/null 2>&1 || true\n'
                 '  python3 "$OBSERVED_TOOL" "$ITERATION_DIR" >/dev/null 2>&1 || true\n'
+                '  python3 "$RUNTIME_TOOL" update "$ITERATION_DIR" >/dev/null 2>&1 || true\n'
+                '  python3 "$BRANCH_MEMORY_TOOL" --direct ingest >/dev/null 2>&1 || true\n'
                 '}\n\n'
                 'dispatch_one() {\n'
                 '  local config=$1\n'
                 "  local attempt=1\n"
                 "  local rc=0\n"
                 '  while (( attempt <= QUEUE_RETRY_ATTEMPTS )); do\n'
+                '    python3 "$OBSERVED_TOOL" "$ITERATION_DIR" >/dev/null 2>&1 || true\n'
+                '    if run_has_completed_outputs "$config"; then\n'
+                '      echo "[$(date -Iseconds)] dispatch_skip_completed config=$(basename "$config")"\n'
+                '      return 0\n'
+                '    fi\n'
                 '    echo "[$(date -Iseconds)] dispatch config=$(basename "$config") host=${HOST:-auto} attempt=${attempt}/${QUEUE_RETRY_ATTEMPTS}"\n'
                 '    if [[ -n "$HOST" ]]; then\n'
                 '      if bash "$DISPATCH" --host "$HOST" "$WRAPPER" "$SCRIPT" "$config" "${SUPPORT_FILES[@]}"; then\n'
@@ -488,6 +537,11 @@ def prepare_sweep(spec: dict, spec_path: Path, out_dir: Path) -> tuple[Path, Pat
                 "    if (( rc == 0 )); then\n"
                 "      return 0\n"
                 "    fi\n"
+                '    python3 "$OBSERVED_TOOL" "$ITERATION_DIR" >/dev/null 2>&1 || true\n'
+                '    if run_has_completed_outputs "$config"; then\n'
+                '      echo "[$(date -Iseconds)] dispatch_nonzero_but_completed config=$(basename "$config") rc=${rc}"\n'
+                '      return 0\n'
+                '    fi\n'
                 '    if (( attempt == QUEUE_RETRY_ATTEMPTS )); then\n'
                 '      echo "[$(date -Iseconds)] dispatch_failed config=$(basename "$config") attempts=${QUEUE_RETRY_ATTEMPTS}" >&2\n'
                 "      return $rc\n"

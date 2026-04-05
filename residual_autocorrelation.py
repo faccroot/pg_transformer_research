@@ -203,3 +203,59 @@ def scalar_acf(
         corr = 0.0 if denom <= 1e-8 else float(np.dot(lhs_c, rhs_c) / denom)
         rows.append({"lag": lag, "count": int(lhs.size), "corr": corr})
     return rows
+
+
+def factorize_residual_pca(
+    vectors: np.ndarray,
+    *,
+    max_factors: int,
+    center: bool = True,
+) -> dict[str, np.ndarray]:
+    arr = np.asarray(vectors, dtype=np.float32)
+    if arr.ndim != 2:
+        raise ValueError(f"expected 2D vectors, got shape {arr.shape!r}")
+    n, d = int(arr.shape[0]), int(arr.shape[1])
+    if max_factors <= 0 or n <= 0 or d <= 0:
+        return {
+            "mean": np.zeros((d,), dtype=np.float32),
+            "components": np.zeros((0, d), dtype=np.float32),
+            "scores": np.zeros((n, 0), dtype=np.float32),
+            "explained_variance_ratio": np.zeros((0,), dtype=np.float32),
+        }
+    mean = arr.mean(axis=0, dtype=np.float32) if center else np.zeros((d,), dtype=np.float32)
+    centered = arr - mean[None, :]
+    rank = min(int(max_factors), n, d)
+    if rank <= 0:
+        return {
+            "mean": mean.astype(np.float32),
+            "components": np.zeros((0, d), dtype=np.float32),
+            "scores": np.zeros((n, 0), dtype=np.float32),
+            "explained_variance_ratio": np.zeros((0,), dtype=np.float32),
+        }
+    try:
+        _u, singular_values, vt = np.linalg.svd(centered, full_matrices=False)
+    except np.linalg.LinAlgError:
+        return {
+            "mean": mean.astype(np.float32),
+            "components": np.zeros((0, d), dtype=np.float32),
+            "scores": np.zeros((n, 0), dtype=np.float32),
+            "explained_variance_ratio": np.zeros((0,), dtype=np.float32),
+        }
+    components = vt[:rank].astype(np.float32, copy=False)
+    scores = centered @ components.T
+    if singular_values.size <= 0:
+        explained = np.zeros((0,), dtype=np.float32)
+    else:
+        variances = (singular_values.astype(np.float32) ** 2) / float(max(n - 1, 1))
+        total_var = float(np.sum(variances, dtype=np.float32))
+        explained = (
+            np.zeros((rank,), dtype=np.float32)
+            if total_var <= 1.0e-8
+            else (variances[:rank] / total_var).astype(np.float32, copy=False)
+        )
+    return {
+        "mean": mean.astype(np.float32),
+        "components": components,
+        "scores": scores.astype(np.float32, copy=False),
+        "explained_variance_ratio": explained,
+    }

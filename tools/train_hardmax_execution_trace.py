@@ -29,6 +29,11 @@ from execution_trace_pretrain_dataset import (  # noqa: E402
     load_examples_jsonl,
     pad_encoded_batch,
 )
+from execution_trace_verifier import (  # noqa: E402
+    ROLLOUT_MODES,
+    build_mixed_rollout_input_batch,
+    build_rollout_input_batch,
+)
 from logic_register_mlx import CastedLinear, HardmaxStructuralController  # noqa: E402
 
 
@@ -78,11 +83,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--write-count-weight", type=float, default=0.35)
     parser.add_argument("--step-weight", type=float, default=0.5)
     parser.add_argument("--branch-weight", type=float, default=0.5)
+    parser.add_argument("--stack-depth-weight", type=float, default=0.35)
+    parser.add_argument("--env-size-weight", type=float, default=0.35)
     parser.add_argument("--delta-weight", type=float, default=0.35)
     parser.add_argument("--output-weight", type=float, default=0.35)
+    parser.add_argument("--rollout-consistency-weight", type=float, default=0.0)
+    parser.add_argument("--rollout-consistency-horizon", type=int, default=1)
+    parser.add_argument("--rollout-consistency-mode", choices=ROLLOUT_MODES, default="predicted_all")
+    parser.add_argument("--scheduled-sampling-prob", type=float, default=0.0)
+    parser.add_argument("--scheduled-sampling-mode", choices=ROLLOUT_MODES, default="predicted_opcode_step_plus_sizes")
+    parser.add_argument("--scheduled-sampling-prefix-keep", type=int, default=1)
     parser.add_argument("--run-id", default="", help="Optional run identifier for staged sweeps.")
     parser.add_argument("--out-dir", default="", help="Optional output directory for staged sweeps.")
     parser.add_argument("--controller-out", default="", help="Optional path to save a controller-only NPZ init artifact.")
+    parser.add_argument("--model-out", default="", help="Optional path to save a full pretrainer NPZ checkpoint.")
     parser.add_argument("--summary-out", default="", help="Optional path to a final metrics JSON file.")
     return parser
 
@@ -129,6 +143,29 @@ def masked_accuracy(logits: mx.array, targets: mx.array, mask: mx.array) -> floa
     return float((mx.sum(correct) / denom).item())
 
 
+LOGIT_TO_INPUT_FIELD = {
+    "opcode": "opcode_ids",
+    "step_type": "step_type_ids",
+    "read_var": "read_var_ids",
+    "write_var": "write_var_ids",
+    "read_count": "read_count_ids",
+    "write_count": "write_count_ids",
+    "branch": "branch_ids",
+    "stack_depth": "stack_depth_ids",
+    "env_size": "env_size_ids",
+    "env_delta": "env_delta_size_ids",
+    "output": "output_flag_ids",
+}
+
+
+def predicted_fields_np_from_logits(logits: dict[str, mx.array]) -> dict[str, np.ndarray]:
+    return {
+        input_field: np.asarray(mx.argmax(logit.astype(mx.float32), axis=-1).astype(mx.int32))
+        for logit_name, input_field in LOGIT_TO_INPUT_FIELD.items()
+        for logit in [logits[logit_name]]
+    }
+
+
 class TraceHardmaxPretrainer(nn.Module):
     def __init__(
         self,
@@ -171,6 +208,8 @@ class TraceHardmaxPretrainer(nn.Module):
         self.read_count_head = CastedLinear(state_dim, vocab.max_memop_bucket)
         self.write_count_head = CastedLinear(state_dim, vocab.max_memop_bucket)
         self.branch_head = CastedLinear(state_dim, len(vocab.branch_to_id))
+        self.stack_depth_head = CastedLinear(state_dim, vocab.max_stack_bucket)
+        self.env_size_head = CastedLinear(state_dim, vocab.max_env_bucket)
         self.delta_head = CastedLinear(state_dim, vocab.max_delta_bucket)
         self.output_head = CastedLinear(state_dim, 2)
 
@@ -203,6 +242,8 @@ class TraceHardmaxPretrainer(nn.Module):
             "read_count": self.read_count_head(struct_state),
             "write_count": self.write_count_head(struct_state),
             "branch": self.branch_head(struct_state),
+            "stack_depth": self.stack_depth_head(struct_state),
+            "env_size": self.env_size_head(struct_state),
             "env_delta": self.delta_head(struct_state),
             "output": self.output_head(struct_state),
         }
@@ -218,23 +259,64 @@ class TraceHardmaxPretrainer(nn.Module):
         read_count_weight: float,
         write_count_weight: float,
         branch_weight: float,
+        stack_depth_weight: float,
+        env_size_weight: float,
         delta_weight: float,
         output_weight: float,
+        rollout_consistency_weight: float,
+        rollout_consistency_horizon: int,
+        rollout_consistency_mode: str,
         usage_balance_weight: float,
         diversity_weight: float,
         confidence_weight: float,
     ) -> tuple[mx.array, dict[str, mx.array]]:
         logits, aux = self.forward_logits(batch)
         mask = batch["valid_mask"].astype(mx.float32)
-        opcode_loss = masked_cross_entropy(logits["opcode"], batch["target_next_opcode_ids"], mask)
-        step_loss = masked_cross_entropy(logits["step_type"], batch["target_next_step_type_ids"], mask)
-        read_loss = masked_cross_entropy(logits["read_var"], batch["target_next_read_var_ids"], mask)
-        write_loss = masked_cross_entropy(logits["write_var"], batch["target_next_write_var_ids"], mask)
-        read_count_loss = masked_cross_entropy(logits["read_count"], batch["target_next_read_count_ids"], mask)
-        write_count_loss = masked_cross_entropy(logits["write_count"], batch["target_next_write_count_ids"], mask)
-        branch_loss = masked_cross_entropy(logits["branch"], batch["target_next_branch_ids"], mask)
-        delta_loss = masked_cross_entropy(logits["env_delta"], batch["target_next_env_delta_size_ids"], mask)
-        output_loss = masked_cross_entropy(logits["output"], batch["target_next_output_flag_ids"], mask)
+
+        def prediction_losses(
+            logits_dict: dict[str, mx.array],
+            target_batch: dict[str, mx.array],
+            target_mask: mx.array,
+        ) -> tuple[mx.array, dict[str, mx.array]]:
+            opcode_loss = masked_cross_entropy(logits_dict["opcode"], target_batch["target_next_opcode_ids"], target_mask)
+            step_loss = masked_cross_entropy(logits_dict["step_type"], target_batch["target_next_step_type_ids"], target_mask)
+            read_loss = masked_cross_entropy(logits_dict["read_var"], target_batch["target_next_read_var_ids"], target_mask)
+            write_loss = masked_cross_entropy(logits_dict["write_var"], target_batch["target_next_write_var_ids"], target_mask)
+            read_count_loss = masked_cross_entropy(logits_dict["read_count"], target_batch["target_next_read_count_ids"], target_mask)
+            write_count_loss = masked_cross_entropy(logits_dict["write_count"], target_batch["target_next_write_count_ids"], target_mask)
+            branch_loss = masked_cross_entropy(logits_dict["branch"], target_batch["target_next_branch_ids"], target_mask)
+            stack_depth_loss = masked_cross_entropy(logits_dict["stack_depth"], target_batch["target_next_stack_depth_ids"], target_mask)
+            env_size_loss = masked_cross_entropy(logits_dict["env_size"], target_batch["target_next_env_size_ids"], target_mask)
+            delta_loss = masked_cross_entropy(logits_dict["env_delta"], target_batch["target_next_env_delta_size_ids"], target_mask)
+            output_loss = masked_cross_entropy(logits_dict["output"], target_batch["target_next_output_flag_ids"], target_mask)
+            total_prediction = (
+                opcode_loss
+                + step_weight * step_loss
+                + read_weight * read_loss
+                + write_weight * write_loss
+                + read_count_weight * read_count_loss
+                + write_count_weight * write_count_loss
+                + branch_weight * branch_loss
+                + stack_depth_weight * stack_depth_loss
+                + env_size_weight * env_size_loss
+                + delta_weight * delta_loss
+                + output_weight * output_loss
+            ).astype(mx.float32)
+            return total_prediction, {
+                "loss_opcode": opcode_loss.astype(mx.float32),
+                "loss_step": step_loss.astype(mx.float32),
+                "loss_read": read_loss.astype(mx.float32),
+                "loss_write": write_loss.astype(mx.float32),
+                "loss_read_count": read_count_loss.astype(mx.float32),
+                "loss_write_count": write_count_loss.astype(mx.float32),
+                "loss_branch": branch_loss.astype(mx.float32),
+                "loss_stack_depth": stack_depth_loss.astype(mx.float32),
+                "loss_env_size": env_size_loss.astype(mx.float32),
+                "loss_delta": delta_loss.astype(mx.float32),
+                "loss_output": output_loss.astype(mx.float32),
+            }
+
+        prediction_total, prediction_metrics = prediction_losses(logits, batch, mask)
 
         probs = [mx.softmax(logits[name].astype(mx.float32), axis=-1) for name in logits]
         norm_entropies: list[mx.array] = []
@@ -248,31 +330,51 @@ class TraceHardmaxPretrainer(nn.Module):
         conf_loss = mx.sum(conf_sq * mask) / mx.maximum(mx.sum(mask), mx.array(1.0e-6, dtype=mx.float32))
 
         usage_balance, diversity, entropy = self.controller.regularization_losses(aux)
+        rollout_loss = mx.array(0.0, dtype=mx.float32)
+        if rollout_consistency_weight > 0.0 and rollout_consistency_horizon > 0:
+            actual_batch_np = {
+                key: np.asarray(value)
+                for key, value in batch.items()
+            }
+            current_pred_by_field = predicted_fields_np_from_logits(logits)
+            for rollout_step in range(1, int(rollout_consistency_horizon) + 1):
+                current_rollout_inputs = build_rollout_input_batch(
+                    actual_batch_np,
+                    current_pred_by_field,
+                    self.vocab,
+                    rollout_consistency_mode,
+                )
+                rollout_batch_np = {
+                    key: np.array(value, copy=True)
+                    for key, value in actual_batch_np.items()
+                }
+                rollout_batch_np.update(current_rollout_inputs)
+                rollout_mask_np = np.array(actual_batch_np["valid_mask"], copy=True)
+                rollout_mask_np[:, : min(rollout_step, rollout_mask_np.shape[1])] = 0.0
+                rollout_batch_np["valid_mask"] = rollout_mask_np.astype(np.float32, copy=False)
+                rollout_batch = batch_to_mx(rollout_batch_np)
+                rollout_logits, _rollout_aux = self.forward_logits(rollout_batch)
+                rollout_prediction_total, _rollout_prediction_metrics = prediction_losses(
+                    rollout_logits,
+                    rollout_batch,
+                    rollout_batch["valid_mask"].astype(mx.float32),
+                )
+                rollout_loss = rollout_loss + rollout_prediction_total
+                current_pred_by_field = predicted_fields_np_from_logits(rollout_logits)
+            rollout_loss = (rollout_loss / float(max(int(rollout_consistency_horizon), 1))).astype(mx.float32)
+
         total = (
-            opcode_loss
-            + step_weight * step_loss
-            + read_weight * read_loss
-            + write_weight * write_loss
-            + read_count_weight * read_count_loss
-            + write_count_weight * write_count_loss
-            + branch_weight * branch_loss
-            + delta_weight * delta_loss
-            + output_weight * output_loss
+            prediction_total
+            + rollout_consistency_weight * rollout_loss
             + usage_balance_weight * usage_balance
             + diversity_weight * diversity
             + confidence_weight * conf_loss
         ).astype(mx.float32)
         metrics = {
             "loss_total": total,
-            "loss_opcode": opcode_loss.astype(mx.float32),
-            "loss_step": step_loss.astype(mx.float32),
-            "loss_read": read_loss.astype(mx.float32),
-            "loss_write": write_loss.astype(mx.float32),
-            "loss_read_count": read_count_loss.astype(mx.float32),
-            "loss_write_count": write_count_loss.astype(mx.float32),
-            "loss_branch": branch_loss.astype(mx.float32),
-            "loss_delta": delta_loss.astype(mx.float32),
-            "loss_output": output_loss.astype(mx.float32),
+            "loss_prediction": prediction_total.astype(mx.float32),
+            **prediction_metrics,
+            "loss_rollout": rollout_loss.astype(mx.float32),
             "loss_confidence": conf_loss.astype(mx.float32),
             "loss_usage_balance": usage_balance.astype(mx.float32),
             "loss_diversity": diversity.astype(mx.float32),
@@ -296,6 +398,39 @@ def sample_batch(
     return batch_to_mx(pad_encoded_batch(chosen, vocab))
 
 
+def maybe_apply_scheduled_sampling(
+    model: TraceHardmaxPretrainer,
+    batch: dict[str, mx.array],
+    vocab: TracePretrainVocab,
+    *,
+    replace_prob: float,
+    mode: str,
+    min_teacher_prefix: int,
+    np_rng: np.random.Generator,
+) -> tuple[dict[str, mx.array], float]:
+    if replace_prob <= 0.0:
+        return batch, 0.0
+    logits, _aux = model.forward_logits(batch)
+    predicted_batch = predicted_fields_np_from_logits(logits)
+    actual_batch_np = {key: np.asarray(value) for key, value in batch.items()}
+    mixed_inputs, replace_mask = build_mixed_rollout_input_batch(
+        actual_batch_np,
+        predicted_batch,
+        vocab,
+        mode,
+        replace_prob=float(replace_prob),
+        rng=np_rng,
+        min_teacher_prefix=int(min_teacher_prefix),
+    )
+    mixed_batch_np = {
+        key: np.array(value, copy=True)
+        for key, value in actual_batch_np.items()
+    }
+    mixed_batch_np.update(mixed_inputs)
+    replaced_fraction = float(replace_mask.astype(np.float32).mean())
+    return batch_to_mx(mixed_batch_np), replaced_fraction
+
+
 def eval_model(
     model: TraceHardmaxPretrainer,
     sequences,
@@ -316,8 +451,13 @@ def eval_model(
         read_count_weight=args.read_count_weight,
         write_count_weight=args.write_count_weight,
         branch_weight=args.branch_weight,
+        stack_depth_weight=args.stack_depth_weight,
+        env_size_weight=args.env_size_weight,
         delta_weight=args.delta_weight,
         output_weight=args.output_weight,
+        rollout_consistency_weight=args.rollout_consistency_weight,
+        rollout_consistency_horizon=args.rollout_consistency_horizon,
+        rollout_consistency_mode=args.rollout_consistency_mode,
         usage_balance_weight=args.usage_balance_weight,
         diversity_weight=args.diversity_weight,
         confidence_weight=args.confidence_weight,
@@ -332,6 +472,8 @@ def eval_model(
         "read_count_acc": masked_accuracy(logits["read_count"], batch["target_next_read_count_ids"], mask),
         "write_count_acc": masked_accuracy(logits["write_count"], batch["target_next_write_count_ids"], mask),
         "branch_acc": masked_accuracy(logits["branch"], batch["target_next_branch_ids"], mask),
+        "stack_depth_acc": masked_accuracy(logits["stack_depth"], batch["target_next_stack_depth_ids"], mask),
+        "env_size_acc": masked_accuracy(logits["env_size"], batch["target_next_env_size_ids"], mask),
         "delta_acc": masked_accuracy(logits["env_delta"], batch["target_next_env_delta_size_ids"], mask),
         "output_acc": masked_accuracy(logits["output"], batch["target_next_output_flag_ids"], mask),
         "confidence_mean": float(mx.mean(aux["confidence"].astype(mx.float32)).item()),
@@ -372,6 +514,13 @@ def export_controller_init_state(model: TraceHardmaxPretrainer) -> dict[str, mx.
     }
 
 
+def export_full_model_state(model: TraceHardmaxPretrainer) -> dict[str, mx.array]:
+    return {
+        str(name): value
+        for name, value in tree_flatten(model.state)
+    }
+
+
 def load_or_generate_examples(args: argparse.Namespace) -> list[dict[str, object]]:
     if args.trace_jsonl:
         return load_examples_jsonl(args.trace_jsonl)
@@ -390,6 +539,7 @@ def main() -> None:
     args = parse_args()
     rng = random.Random(args.seed)
     np.random.seed(args.seed)
+    np_rng = np.random.default_rng(args.seed)
 
     examples = load_or_generate_examples(args)
     if len(examples) < 4:
@@ -421,8 +571,13 @@ def main() -> None:
             read_count_weight=args.read_count_weight,
             write_count_weight=args.write_count_weight,
             branch_weight=args.branch_weight,
+            stack_depth_weight=args.stack_depth_weight,
+            env_size_weight=args.env_size_weight,
             delta_weight=args.delta_weight,
             output_weight=args.output_weight,
+            rollout_consistency_weight=args.rollout_consistency_weight,
+            rollout_consistency_horizon=args.rollout_consistency_horizon,
+            rollout_consistency_mode=args.rollout_consistency_mode,
             usage_balance_weight=args.usage_balance_weight,
             diversity_weight=args.diversity_weight,
             confidence_weight=args.confidence_weight,
@@ -431,9 +586,19 @@ def main() -> None:
 
     best_val: dict[str, float] | None = None
     train_metrics_last: dict[str, float] = {}
+    train_scheduled_fraction_last = 0.0
     t0 = time.perf_counter()
     for step in range(1, args.steps + 1):
         batch = sample_batch(train_sequences, vocab, batch_size=args.batch_size, rng=rng)
+        batch, train_scheduled_fraction_last = maybe_apply_scheduled_sampling(
+            model,
+            batch,
+            vocab,
+            replace_prob=float(args.scheduled_sampling_prob),
+            mode=str(args.scheduled_sampling_mode),
+            min_teacher_prefix=int(args.scheduled_sampling_prefix_keep),
+            np_rng=np_rng,
+        )
         loss, grads = loss_and_grad(batch)
         optimizer_step(model, optimizer, grads)
 
@@ -447,6 +612,10 @@ def main() -> None:
                         f"loss:{float(loss.item()):.4f}",
                         f"train_opcode_acc:{train_metrics_last.get('opcode_acc', 0.0):.4f}",
                         f"train_write_acc:{train_metrics_last.get('write_acc', 0.0):.4f}",
+                        f"train_stack_acc:{train_metrics_last.get('stack_depth_acc', 0.0):.4f}",
+                        f"train_env_acc:{train_metrics_last.get('env_size_acc', 0.0):.4f}",
+                        f"train_rollout:{train_metrics_last.get('loss_rollout', 0.0):.4f}",
+                        f"train_ss_frac:{train_scheduled_fraction_last:.4f}",
                         f"train_conf:{train_metrics_last.get('confidence_mean', 0.0):.4f}",
                         f"hard_peak:{train_metrics_last.get('hard_usage_peak_frac', 0.0):.4f}",
                         f"soft_ppl:{train_metrics_last.get('soft_usage_perplexity', 0.0):.4f}",
@@ -465,6 +634,9 @@ def main() -> None:
                         f"val_loss:{val_metrics.get('loss', 0.0):.4f}",
                         f"val_opcode_acc:{val_metrics.get('opcode_acc', 0.0):.4f}",
                         f"val_write_acc:{val_metrics.get('write_acc', 0.0):.4f}",
+                        f"val_stack_acc:{val_metrics.get('stack_depth_acc', 0.0):.4f}",
+                        f"val_env_acc:{val_metrics.get('env_size_acc', 0.0):.4f}",
+                        f"val_rollout:{val_metrics.get('loss_rollout', 0.0):.4f}",
                         f"val_conf:{val_metrics.get('confidence_mean', 0.0):.4f}",
                         f"val_hard_peak:{val_metrics.get('hard_usage_peak_frac', 0.0):.4f}",
                         f"val_soft_ppl:{val_metrics.get('soft_usage_perplexity', 0.0):.4f}",
@@ -488,6 +660,23 @@ def main() -> None:
             "batch_size": args.batch_size,
             "steps": args.steps,
             "lr": args.lr,
+            "rollout_consistency_weight": args.rollout_consistency_weight,
+            "rollout_consistency_horizon": args.rollout_consistency_horizon,
+            "rollout_consistency_mode": args.rollout_consistency_mode,
+            "scheduled_sampling_prob": args.scheduled_sampling_prob,
+            "scheduled_sampling_mode": args.scheduled_sampling_mode,
+            "scheduled_sampling_prefix_keep": args.scheduled_sampling_prefix_keep,
+        },
+        "generation_config": {
+            "trace_jsonl": args.trace_jsonl,
+            "generate_examples": args.generate_examples,
+            "seed": args.seed,
+            "task_family": args.task_family,
+            "task_family_mixture": args.task_family_mixture,
+            "max_statements": args.max_statements,
+            "max_depth": args.max_depth,
+            "max_trace_steps": args.max_trace_steps,
+            "val_fraction": args.val_fraction,
         },
         "final_train": train_metrics_last,
         "best_val": {} if best_val is None else best_val,
@@ -498,6 +687,15 @@ def main() -> None:
             "branch": len(vocab.branch_to_id),
         },
     }
+    model_out_str = args.model_out
+    if not model_out_str and args.out_dir:
+        run_slug = args.run_id or "hardmax-trace-pretrain"
+        model_out_str = str(Path(args.out_dir) / f"{run_slug}_trace_pretrain_model.npz")
+    if model_out_str:
+        model_out = Path(model_out_str)
+        model_out.parent.mkdir(parents=True, exist_ok=True)
+        mx.savez(str(model_out), **export_full_model_state(model))
+        summary["model_out"] = str(model_out)
     controller_out_str = args.controller_out
     if not controller_out_str and args.out_dir:
         run_slug = args.run_id or "hardmax-trace-pretrain"

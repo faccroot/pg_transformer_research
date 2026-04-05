@@ -87,10 +87,32 @@ Existing engineering seam:
 - staged follow-on aux-weight ladder:
   - [mlx_h12_multihorizon_auxweight_ladder.example.json](/home/zaytor/transformer_research/parameter-golf/research/iterations/templates/mlx_h12_multihorizon_auxweight_ladder.example.json)
 
+Important reframing:
+
+- the current H12 smoke is best treated as a probe, not the intended long-term form
+- naive horizon heads on small models are no longer the preferred target object
+- the next reboot should move supervision onto register-like state slots and use forward curriculum rather than only parallel fixed-horizon heads
+
 Decision rule:
 
 - if the `0.05` auxiliary sweep is directionally positive but small, do not conclude the branch is weak yet
 - next step should be the aux-weight ladder at `0.1` and `0.2`, with a random-init separator run
+- if naive H12 is flat or weak, do not keep extending it blindly; reboot as:
+  - register/state-slot futures
+  - forward curriculum over horizons
+  - later, one long-horizon future-summary head
+
+### C1b. Register / curriculum supervision reboot
+
+New principal variation for H12:
+
+- use register-like future slots or hardmax-adjacent state slots
+- predict horizons through those slots instead of bolting all heads directly onto the trunk
+- train with forward curriculum (`1 -> 2 -> 4 -> 8`) rather than immediate full-horizon supervision
+
+Intended read:
+
+- test whether the supervision-density idea is right but the naive small-model head design is wrong
 
 Related branch:
 
@@ -128,3 +150,8 @@ Question:
 
 Advance this branch only if the added supervision improves transfer or BPB without becoming
 just another expensive auxiliary loss that does not survive export.
+
+Current queue interpretation:
+
+- keep the live H12 smoke as a probe
+- but the next real H12 build should be the register/curriculum reboot, not more naive multi-horizon tuning

@@ -8,6 +8,24 @@ This note reviews three adjacent ideas that should not be merged blindly into th
 
 The common theme is "use compute more intelligently than the baseline," but they touch different codepaths and have different competition-risk profiles.
 
+## Current principal variation
+
+The update to this lane is:
+
+- token-level helper or adaptation updates are now effectively pruned
+- the next useful adaptation forms are:
+  - chunk-level updates
+  - query-only updates
+  - hard-span-triggered updates
+
+So the lane should stop asking:
+
+- "can we update a little every few tokens?"
+
+and start asking:
+
+- "what is the largest, cheapest, most selective update block that actually changes long-context behavior?"
+
 ## Immediate conclusions
 
 ### 1. H-net and morphology-aware tokenization are real BPB levers, but they belong in the tokenizer lane.
@@ -60,6 +78,11 @@ The safest first slice is:
 - adapt only a small sidecar or low-rank residual
 - update only on already-scored validation tokens
 - keep it opt-in and out of the default record path
+
+Updated interpretation:
+
+- if we pursue helper-worker adaptation here, the default form should be large chunk or query-only updates
+- token-scale online updates are now the negative control, not the main bet
 
 This is the cleanest way to test the legal and practical edge you described without tangling it into the standard `train_gpt_mlx.py` training loop.
 
@@ -125,6 +148,7 @@ So the boundary lane is now:
 - Curriculum-conditioned depth schedule at the chunk or phase level
 - Extra eval-only recurrence steps on shared templates
 - Sidecar-only or LoRA-like test-time adaptation on scored validation chunks
+- query-only or large-chunk helper updates
 - Cross-chunk memory bank in a separate evaluator
 
 ### Medium-term fits
@@ -138,6 +162,7 @@ So the boundary lane is now:
 - Full tokenizer replacement inside the current curriculum experiments
 - Per-token ragged halting in the base MLX trainer
 - Architecture growth inside the main training script
+- token-level helper updates as the default adaptation form
 
 ## Recommended experiment order
 

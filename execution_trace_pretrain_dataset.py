@@ -56,6 +56,8 @@ class EncodedTraceSequence:
     target_next_read_count_ids: np.ndarray
     target_next_write_count_ids: np.ndarray
     target_next_branch_ids: np.ndarray
+    target_next_stack_depth_ids: np.ndarray
+    target_next_env_size_ids: np.ndarray
     target_next_env_delta_size_ids: np.ndarray
     target_next_output_flag_ids: np.ndarray
     valid_mask: np.ndarray
@@ -209,6 +211,8 @@ def encode_trace_example(
     next_read_count_ids: list[int] = []
     next_write_count_ids: list[int] = []
     next_branch_ids: list[int] = []
+    next_stack_depth_ids: list[int] = []
+    next_env_size_ids: list[int] = []
     next_env_delta_size_ids: list[int] = []
     next_output_flag_ids: list[int] = []
     valid_mask: list[float] = []
@@ -254,6 +258,8 @@ def encode_trace_example(
             next_read_count_ids.append(0)
             next_write_count_ids.append(0)
             next_branch_ids.append(none_branch_id)
+            next_stack_depth_ids.append(0)
+            next_env_size_ids.append(0)
             next_env_delta_size_ids.append(0)
             next_output_flag_ids.append(0)
             continue
@@ -266,6 +272,8 @@ def encode_trace_example(
         next_read_var = _first_read_var(next_event)
         next_write_var = _first_write_var(next_event)
         next_branch = _branch_label(next_event.get("branch_taken"))
+        next_stack_after = next_event.get("stack_after")
+        next_env_after = next_event.get("env_after")
         next_env_delta = next_event.get("env_delta")
         next_output_delta = next_event.get("output_delta")
 
@@ -276,6 +284,12 @@ def encode_trace_example(
         next_read_count_ids.append(_bucket_size(_read_count(next_event), vocab.max_memop_bucket))
         next_write_count_ids.append(_bucket_size(_write_count(next_event), vocab.max_memop_bucket))
         next_branch_ids.append(vocab.branch_to_id.get(next_branch, none_branch_id))
+        next_stack_depth_ids.append(
+            _bucket_size(len(next_stack_after) if isinstance(next_stack_after, list) else 0, vocab.max_stack_bucket)
+        )
+        next_env_size_ids.append(
+            _bucket_size(len(next_env_after) if isinstance(next_env_after, dict) else 0, vocab.max_env_bucket)
+        )
         next_env_delta_size_ids.append(
             _bucket_size(len(next_env_delta) if isinstance(next_env_delta, dict) else 0, vocab.max_delta_bucket)
         )
@@ -302,6 +316,8 @@ def encode_trace_example(
         target_next_read_count_ids=np.asarray(next_read_count_ids, dtype=np.int32),
         target_next_write_count_ids=np.asarray(next_write_count_ids, dtype=np.int32),
         target_next_branch_ids=np.asarray(next_branch_ids, dtype=np.int32),
+        target_next_stack_depth_ids=np.asarray(next_stack_depth_ids, dtype=np.int32),
+        target_next_env_size_ids=np.asarray(next_env_size_ids, dtype=np.int32),
         target_next_env_delta_size_ids=np.asarray(next_env_delta_size_ids, dtype=np.int32),
         target_next_output_flag_ids=np.asarray(next_output_flag_ids, dtype=np.int32),
         valid_mask=np.asarray(valid_mask, dtype=np.float32),
@@ -346,6 +362,8 @@ def pad_encoded_batch(
         "target_next_read_count_ids": alloc(0, dtype=np.int32),
         "target_next_write_count_ids": alloc(0, dtype=np.int32),
         "target_next_branch_ids": alloc(vocab.none_branch_id, dtype=np.int32),
+        "target_next_stack_depth_ids": alloc(0, dtype=np.int32),
+        "target_next_env_size_ids": alloc(0, dtype=np.int32),
         "target_next_env_delta_size_ids": alloc(0, dtype=np.int32),
         "target_next_output_flag_ids": alloc(0, dtype=np.int32),
         "valid_mask": alloc(0.0, dtype=np.float32),

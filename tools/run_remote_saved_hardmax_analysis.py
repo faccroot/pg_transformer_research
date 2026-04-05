@@ -32,6 +32,11 @@ TOOL_SPECS = {
         "output_flag": "--summary-json",
         "default_remote_output": "logit_factors_summary.json",
     },
+    "residual": {
+        "script": ROOT / "tools" / "analyze_residual_autocorrelation.py",
+        "output_flag": "--result-json",
+        "default_remote_output": "residual_autocorrelation.json",
+    },
     "face": {
         "script": ROOT / "tools" / "export_hardmax_face_trace.py",
         "output_flag": "--output-json",

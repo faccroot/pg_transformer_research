@@ -6,7 +6,16 @@ import importlib
 import json
 import os
 import sys
+import tarfile
+import tempfile
 from pathlib import Path
+
+if sys.platform.startswith("linux"):
+    existing_cxxflags = str(os.environ.get("CXXFLAGS", "")).strip()
+    if "-fpermissive" not in existing_cxxflags.split():
+        os.environ["CXXFLAGS"] = "-fpermissive" if not existing_cxxflags else f"{existing_cxxflags} -fpermissive"
+    if not str(os.environ.get("CXX", "")).strip():
+        os.environ["CXX"] = "g++ -fpermissive"
 
 import numpy as np
 import sentencepiece as spm
@@ -19,21 +28,18 @@ for root in (REPO_ROOT, TOOLS_ROOT):
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
 
-import eval_saved_structural as evs
-from residual_autocorrelation import (
-    argmax_embedding_residuals,
-    cosine_acf,
-    detect_regime_segments,
-    expected_embedding_residuals,
-    scalar_acf,
-    transition_window_mask,
-)
-from text_prosody_features import (
-    BOUNDARY_STRENGTH_NAMES,
-    TOKEN_CLASS_NAMES,
-    bucketize_distances,
-    extract_text_prosody_features,
-)
+evs = None
+argmax_embedding_residuals = None
+cosine_acf = None
+detect_regime_segments = None
+expected_embedding_residuals = None
+factorize_residual_pca = None
+scalar_acf = None
+transition_window_mask = None
+BOUNDARY_STRENGTH_NAMES = ()
+TOKEN_CLASS_NAMES = ()
+bucketize_distances = None
+extract_text_prosody_features = None
 
 
 def parse_args() -> argparse.Namespace:
@@ -47,6 +53,7 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--label", default="")
     p.add_argument("--result-json", required=True)
+    p.add_argument("--repo-bundle", default="", help="Optional tar/tgz of current repo Python modules for remote parity.")
     p.add_argument("--tokenizer-path", default="", help="Optional override for TOKENIZER_PATH")
     p.add_argument("--data-path", default="", help="Optional override for DATA_PATH")
     p.add_argument("--val-max-seqs", type=int, default=None)
@@ -74,6 +81,12 @@ def parse_args() -> argparse.Namespace:
         help="If >0, also summarize NLL/residual behavior for the first N positions after detected transitions.",
     )
     p.add_argument(
+        "--factor-top-k",
+        type=int,
+        default=0,
+        help="If >0, factorize each residual family with PCA and report per-factor ACF summaries.",
+    )
+    p.add_argument(
         "--probe-layers",
         default="-1",
         help="Comma-separated hidden layers for lightweight prosody probes; empty disables probes.",
@@ -85,6 +98,64 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--top-k-transitions", type=int, default=10)
     p.add_argument("--preview-radius", type=int, default=24)
     return p.parse_args()
+
+
+def maybe_stage_repo_bundle(bundle_path: str) -> Path | None:
+    raw = bundle_path.strip()
+    if not raw:
+        return None
+    bundle = Path(raw).expanduser().resolve()
+    if not bundle.is_file():
+        raise FileNotFoundError(f"Repo bundle not found: {bundle}")
+    temp_root = Path(tempfile.mkdtemp(prefix="residual_acf_bundle_"))
+    with tarfile.open(bundle, "r:*") as tf:
+        tf.extractall(temp_root)
+    candidate_roots = [temp_root / "parameter-golf", temp_root]
+    for root in candidate_roots:
+        if root.exists():
+            tools_root = root / "tools"
+            for path in (root, tools_root):
+                if path.exists() and str(path) not in sys.path:
+                    sys.path.insert(0, str(path))
+            return root
+    return temp_root
+
+
+def load_analysis_modules() -> None:
+    global evs
+    global argmax_embedding_residuals, cosine_acf, detect_regime_segments
+    global expected_embedding_residuals, factorize_residual_pca, scalar_acf, transition_window_mask
+    global BOUNDARY_STRENGTH_NAMES, TOKEN_CLASS_NAMES, bucketize_distances, extract_text_prosody_features
+
+    import eval_saved_structural as evs_mod
+    from residual_autocorrelation import (
+        argmax_embedding_residuals as argmax_embedding_residuals_fn,
+        cosine_acf as cosine_acf_fn,
+        detect_regime_segments as detect_regime_segments_fn,
+        expected_embedding_residuals as expected_embedding_residuals_fn,
+        factorize_residual_pca as factorize_residual_pca_fn,
+        scalar_acf as scalar_acf_fn,
+        transition_window_mask as transition_window_mask_fn,
+    )
+    from text_prosody_features import (
+        BOUNDARY_STRENGTH_NAMES as boundary_strength_names,
+        TOKEN_CLASS_NAMES as token_class_names,
+        bucketize_distances as bucketize_distances_fn,
+        extract_text_prosody_features as extract_text_prosody_features_fn,
+    )
+
+    evs = evs_mod
+    argmax_embedding_residuals = argmax_embedding_residuals_fn
+    cosine_acf = cosine_acf_fn
+    detect_regime_segments = detect_regime_segments_fn
+    expected_embedding_residuals = expected_embedding_residuals_fn
+    factorize_residual_pca = factorize_residual_pca_fn
+    scalar_acf = scalar_acf_fn
+    transition_window_mask = transition_window_mask_fn
+    BOUNDARY_STRENGTH_NAMES = boundary_strength_names
+    TOKEN_CLASS_NAMES = token_class_names
+    bucketize_distances = bucketize_distances_fn
+    extract_text_prosody_features = extract_text_prosody_features_fn
 
 
 def load_model_modules(trainer_module_name: str) -> tuple[object, object | None]:
@@ -445,6 +516,55 @@ def summarize_residual_family(
     }
 
 
+def summarize_residual_factors(
+    residuals: np.ndarray,
+    embedding_table: np.ndarray,
+    sp: spm.SentencePieceProcessor,
+    segment_ids: np.ndarray,
+    *,
+    max_lag: int,
+    top_k_tokens: int,
+    factor_top_k: int,
+    transition_mask: np.ndarray | None = None,
+) -> dict[str, object]:
+    factored = factorize_residual_pca(residuals, max_factors=factor_top_k)
+    explained = np.asarray(factored["explained_variance_ratio"], dtype=np.float32).reshape(-1)
+    components = np.asarray(factored["components"], dtype=np.float32)
+    scores = np.asarray(factored["scores"], dtype=np.float32)
+    rows: list[dict[str, object]] = []
+    for idx in range(int(explained.shape[0])):
+        factor_scores = scores[:, idx]
+        acf_all = scalar_acf(factor_scores, max_lag=max_lag, segment_ids=segment_ids, relation="all")
+        acf_within = scalar_acf(factor_scores, max_lag=max_lag, segment_ids=segment_ids, relation="within")
+        acf_cross = scalar_acf(factor_scores, max_lag=max_lag, segment_ids=segment_ids, relation="cross")
+        row: dict[str, object] = {
+            "factor_index": int(idx),
+            "explained_variance_ratio": float(explained[idx]),
+            "score_mean": float(factor_scores.mean()) if factor_scores.size > 0 else 0.0,
+            "score_std": float(factor_scores.std()) if factor_scores.size > 0 else 0.0,
+            "component_direction": nearest_token_directions(components[idx], embedding_table, sp, top_k=top_k_tokens),
+            "acf_all": acf_all,
+            "acf_within_regime": acf_within,
+            "acf_cross_regime": acf_cross,
+            "acf_summary": {
+                "all": acf_summary(acf_all, "corr"),
+                "within_regime": acf_summary(acf_within, "corr"),
+                "cross_regime": acf_summary(acf_cross, "corr"),
+            },
+        }
+        if transition_mask is not None:
+            row["transition_window_abs_score"] = {
+                "transition_window": summarize_transition_window_values(np.abs(factor_scores), transition_mask),
+                "outside_window": summarize_transition_window_values(np.abs(factor_scores), ~transition_mask),
+            }
+        rows.append(row)
+    return {
+        "num_factors": int(explained.shape[0]),
+        "explained_variance_ratio_sum": float(explained.sum()) if explained.size > 0 else 0.0,
+        "factors": rows,
+    }
+
+
 def summarize_transition_window_residuals(
     residuals: np.ndarray,
     embedding_table: np.ndarray,
@@ -483,6 +603,8 @@ def summarize_transition_window_residuals(
 
 def main() -> None:
     args = parse_args()
+    maybe_stage_repo_bundle(args.repo_bundle)
+    load_analysis_modules()
     evs.apply_config_env(Path(args.config_json), args)
     evs.ensure_dataset_ready(args)
     base_mod, trainer_mod = load_model_modules(args.trainer_module)
@@ -648,6 +770,17 @@ def main() -> None:
                 mask=transition_mask,
                 top_k_tokens=args.top_k_tokens,
             )
+        if int(args.factor_top_k) > 0:
+            expected_summary["factorized_acf"] = summarize_residual_factors(
+                expected_residuals,
+                embedding_table,
+                sp,
+                segment_ids,
+                max_lag=args.max_lag,
+                top_k_tokens=args.top_k_tokens,
+                factor_top_k=int(args.factor_top_k),
+                transition_mask=transition_mask if int(args.transition_window) > 0 else None,
+            )
         residual_modes["expected_embedding"] = expected_summary
     if residual_argmax_rows:
         argmax_summary = summarize_residual_family(
@@ -666,6 +799,17 @@ def main() -> None:
                 sp,
                 mask=transition_mask,
                 top_k_tokens=args.top_k_tokens,
+            )
+        if int(args.factor_top_k) > 0:
+            argmax_summary["factorized_acf"] = summarize_residual_factors(
+                argmax_residuals,
+                embedding_table,
+                sp,
+                segment_ids,
+                max_lag=args.max_lag,
+                top_k_tokens=args.top_k_tokens,
+                factor_top_k=int(args.factor_top_k),
+                transition_mask=transition_mask if int(args.transition_window) > 0 else None,
             )
         residual_modes["argmax_embedding"] = argmax_summary
 
@@ -722,6 +866,7 @@ def main() -> None:
             "regime_min_segment_length": int(args.regime_min_segment_length),
             "layerwise_layers": layerwise_layers,
             "transition_window": int(args.transition_window),
+            "factor_top_k": int(args.factor_top_k),
             "probe_layers": probe_layers,
             "probe_max_samples": int(args.probe_max_samples),
             "probe_ridge": float(args.probe_ridge),

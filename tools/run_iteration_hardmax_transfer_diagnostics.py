@@ -346,16 +346,26 @@ def write_controller_summary(
     result_paths: dict[str, Path],
     artifact_paths: dict[str, Path],
 ) -> None:
-    control_payload = load_json(result_paths[control_entry.run_slug])
+    available_paths = {slug: path for slug, path in result_paths.items() if path.exists()}
+    if not available_paths:
+        return
+    control_slug = control_entry.run_slug if control_entry.run_slug in available_paths else sorted(available_paths)[0]
+    control_payload = load_json(available_paths[control_slug])
     lines: list[str] = []
     lines.append("# Hardmax Controller Diagnostics")
     lines.append("")
-    lines.append(f"Control reference: `{control_entry.run_slug}`")
+    lines.append(f"Control reference: `{control_slug}`")
     lines.append("")
     lines.append("Analyzed hardmax runs:")
-    for run_slug, result_path in sorted(result_paths.items()):
+    for run_slug, result_path in sorted(available_paths.items()):
         lines.append(f"- `{run_slug}`: [{result_path.name}]({result_path.as_posix()})")
-    for run_slug, result_path in sorted(result_paths.items()):
+    missing = sorted(set(result_paths) - set(available_paths))
+    if missing:
+        lines.append("")
+        lines.append("Missing result JSONs:")
+        for run_slug in missing:
+            lines.append(f"- `{run_slug}`")
+    for run_slug, result_path in sorted(available_paths.items()):
         payload = load_json(result_path)
         lines.append("")
         lines.append(f"## {run_slug}")
@@ -374,7 +384,7 @@ def write_controller_summary(
         lines.append(f"- corr(confidence, NLL): `{format_float(controller.get('corr_confidence_vs_nll'))}`")
         after_sentence = nested_get(controller, ("nll_by_prev_boundary", "after_boundary_ge", "after_sentence", "mean"))
         lines.append(f"- NLL after sentence boundary: `{format_float(after_sentence)}`")
-        if run_slug != control_entry.run_slug:
+        if run_slug != control_slug:
             ctrl_state_usage = control_payload.get("state_usage", {})
             ctrl_controller = control_payload.get("controller", {})
             ctrl_transitions = control_payload.get("state_transitions", {})
@@ -391,21 +401,31 @@ def write_causal_summary(
     control_entry: RunEntry,
     result_paths: dict[str, Path],
 ) -> None:
-    control_payload = load_json(result_paths[control_entry.run_slug])
+    available_paths = {slug: path for slug, path in result_paths.items() if path.exists()}
+    if not available_paths:
+        return
+    control_slug = control_entry.run_slug if control_entry.run_slug in available_paths else sorted(available_paths)[0]
+    control_payload = load_json(available_paths[control_slug])
     control_baseline = baseline_bpb_from_causal_payload(control_payload)
     lines: list[str] = []
     lines.append("# Hardmax Causal Ablation Summary")
     lines.append("")
-    lines.append(f"Control reference: `{control_entry.run_slug}`")
+    lines.append(f"Control reference: `{control_slug}`")
     lines.append("")
-    for run_slug, result_path in sorted(result_paths.items()):
+    missing = sorted(set(result_paths) - set(available_paths))
+    if missing:
+        lines.append("Missing result JSONs:")
+        for run_slug in missing:
+            lines.append(f"- `{run_slug}`")
+        lines.append("")
+    for run_slug, result_path in sorted(available_paths.items()):
         payload = load_json(result_path)
         lines.append(f"## {run_slug}")
         baseline_row = next((row for row in payload.get("results", []) if row.get("ablation") == "baseline"), None)
         baseline_bpb = baseline_row.get("val_bpb") if isinstance(baseline_row, dict) else None
         lines.append("")
         lines.append(f"- baseline val_bpb: `{format_float(baseline_bpb)}`")
-        if run_slug != control_entry.run_slug:
+        if run_slug != control_slug:
             delta_vs_control = (float(baseline_bpb) - float(control_baseline)) if baseline_bpb is not None and control_baseline is not None else None
             lines.append(f"- delta baseline vs control: `{format_float(delta_vs_control)}`")
         for row in payload.get("results", []):
@@ -424,10 +444,19 @@ def write_factor_summary(
     *,
     result_paths: dict[str, Path],
 ) -> None:
+    available_paths = {slug: path for slug, path in result_paths.items() if path.exists()}
+    if not available_paths:
+        return
     lines: list[str] = []
     lines.append("# Hardmax Logit Factor Summary")
     lines.append("")
-    for run_slug, result_path in sorted(result_paths.items()):
+    missing = sorted(set(result_paths) - set(available_paths))
+    if missing:
+        lines.append("Missing result JSONs:")
+        for run_slug in missing:
+            lines.append(f"- `{run_slug}`")
+        lines.append("")
+    for run_slug, result_path in sorted(available_paths.items()):
         payload = load_json(result_path)
         lines.append(f"## {run_slug}")
         lines.append("")
@@ -553,11 +582,12 @@ def main() -> None:
                 )
 
     if not args.dry_run and result_paths:
-        control_run_slug = control_entry.run_slug
-        if control_run_slug not in result_paths:
-            # if the control has no hardmax controller, pick the first hardmax run as the baseline summary anchor
-            control_run_slug = sorted(result_paths)[0]
-            control_entry = next(entry for entry in entries if entry.run_slug == control_run_slug)
+        available_result_paths = {slug: path for slug, path in result_paths.items() if path.exists()}
+        if available_result_paths:
+            control_run_slug = control_entry.run_slug
+            if control_run_slug not in available_result_paths:
+                control_run_slug = sorted(available_result_paths)[0]
+                control_entry = next(entry for entry in entries if entry.run_slug == control_run_slug)
         write_controller_summary(
             output_dir / "controller_summary.md",
             control_entry=control_entry,
@@ -565,10 +595,12 @@ def main() -> None:
             artifact_paths=artifact_paths,
         )
     if not args.dry_run and causal_paths:
-        control_run_slug = control_entry.run_slug
-        if control_run_slug not in causal_paths:
-            control_run_slug = sorted(causal_paths)[0]
-            control_entry = next(entry for entry in entries if entry.run_slug == control_run_slug)
+        available_causal_paths = {slug: path for slug, path in causal_paths.items() if path.exists()}
+        if available_causal_paths:
+            control_run_slug = control_entry.run_slug
+            if control_run_slug not in available_causal_paths:
+                control_run_slug = sorted(available_causal_paths)[0]
+                control_entry = next(entry for entry in entries if entry.run_slug == control_run_slug)
         write_causal_summary(
             output_dir / "causal_ablation_summary.md",
             control_entry=control_entry,

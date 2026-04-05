@@ -97,6 +97,19 @@ It now also emits a first text-native prosody surface for FineWeb:
 - prosody-conditioned loss correlations
 - lightweight hidden-state probes for quote state and distance-to-boundary
 
+It now also supports optional residual-factor decomposition:
+
+- PCA factorization of each residual family
+- per-factor scalar ACF over lag
+- within-regime vs cross-regime per-factor persistence
+- nearest-token interpretation for each principal error direction
+
+This is intended to answer the next mechanistic question:
+
+- which error directions are actually persistent?
+- which interventions reduce the persistence of specific factors rather than
+  only the aggregate residual?
+
 That lane is documented separately in:
 
 - [fineweb_prosody_diagnostics_lane_20260331.md](/home/zaytor/transformer_research/parameter-golf/research/project_wide/fineweb_prosody_diagnostics_lane_20260331.md)
@@ -159,6 +172,17 @@ python3 tools/compare_residual_autocorrelation.py \
   --result-json /tmp/residual_compare.json
 ```
 
+Factorized example:
+
+```bash
+python3 tools/analyze_residual_autocorrelation.py \
+  --artifact /path/to/model.npz \
+  --config-json /path/to/run_config.json \
+  --factor-top-k 4 \
+  --transition-window 32 \
+  --result-json /tmp/residual_factorized.json
+```
+
 Context sweep example:
 
 ```bash
@@ -180,6 +204,9 @@ python3 tools/sweep_residual_context.py \
    architectural memory or latent-preface work.
 5. Run regime-conditioned context sweeps to test whether persistent residuals
    collapse mainly with more retrieval horizon or with better latent state.
+6. Test whether a training intervention is reducing aggregate error or
+   specifically collapsing the persistence of a small number of dominant error
+   factors.
 
 ## Why This Matters
 
@@ -196,3 +223,24 @@ That distinction is exactly what decides whether the next win should come from:
 - better adaptive compute
 - better regime/state tracking
 - or a document-level latent preface
+
+## Training Follow-On
+
+The first cheap training intervention built on top of this framework is
+residual-novelty weighting in [train_gpt_mlx.py](/home/zaytor/transformer_research/parameter-golf/train_gpt_mlx.py).
+
+Instead of treating every repeated error equally, it derives an additional
+token-weight multiplier from lag-1 residual novelty:
+
+- repeated error direction -> lower weight
+- novel error direction -> higher weight
+
+This is intentionally cheap and bounded:
+
+- no new model parameters
+- no new supervision source
+- reuses the existing token-weight merge path
+
+The purpose is to test whether the model learns faster when it is told, in
+effect, which errors are redundant repetitions and which errors are new
+information about a different failure mode.

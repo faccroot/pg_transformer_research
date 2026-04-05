@@ -13,6 +13,13 @@ import tempfile
 import zlib
 from pathlib import Path
 
+if sys.platform.startswith("linux"):
+    existing_cxxflags = str(os.environ.get("CXXFLAGS", "")).strip()
+    if "-fpermissive" not in existing_cxxflags.split():
+        os.environ["CXXFLAGS"] = "-fpermissive" if not existing_cxxflags else f"{existing_cxxflags} -fpermissive"
+    if not str(os.environ.get("CXX", "")).strip():
+        os.environ["CXX"] = "g++ -fpermissive"
+
 import mlx.core as mx
 import mlx.nn as nn
 import numpy as np

@@ -33,6 +33,38 @@ over:
 
 - more local tuning of the same residual path.
 
+## Current principal variation
+
+The queue has now shifted to:
+
+1. H15a naive anti-collapse on `freeze300` as the baseline read for this family
+2. H15b `SimVQ + NextLat` as a closed negative result in its current form
+3. H16 residual feedback / error-memory as the next active principal variation
+4. H2 attention shaping as the first conditioning branch to scale if it wins
+5. H12 rebooted as register/curriculum supervision, not more naive small-model horizon heads
+6. H13 rebooted as calibrated uncertainty distillation, not plain sharp KL alone
+
+That means the next build order is no longer:
+
+- more freeze tuning
+- more router work
+- more naive horizon heads
+
+It is:
+
+- stop scaling the current `SimVQ + NextLat` formulation
+- move to the residual-feedback lane for the next bounded intervention
+- then give the surviving hardmax path richer supervision and better-calibrated targets
+
+Execution-verification update:
+
+- the trace controller now has enough held-out teacher-forced validation to
+  support the claim that it learned generalizable execution dynamics
+- poor open-loop rollout remains true, but that is now treated as future work
+  rather than a gating item
+- so execution verification moves to a supporting mechanistic-validation role,
+  while the main build order remains centered on BPB-moving branches
+
 ## Shared Instrumentation
 
 Two instrumentation seams now exist for future winners:
@@ -400,14 +432,20 @@ Branch note:
 
 Nearest tractable tests:
 
-1. train-only multi-horizon auxiliary heads
-2. short rollout residual targets
-3. KV relevance prediction heads
+1. keep the live naive multi-horizon smoke as a probe
+2. reboot the branch around register/state-slot futures plus forward curriculum
+3. later add one future-summary head if the reboot is positive
+4. then extend toward rollout residuals or KV relevance targets
 
 Priority:
 
 - medium-high
 - after H2/H1, before long-horizon generation-format changes
+
+Interpretation update:
+
+- H12 is no longer "more naive horizon heads"
+- H12 is now "compiled-state supervision through register-like futures and curriculum"
 
 ### H13. Distribution-shape supervision
 
@@ -419,9 +457,11 @@ Claim:
 
 This branch treats:
 
-- EMA-teacher KL self-distill
-- later temperature ladders
-- later external-teacher KL
+- the live EMA-teacher KL smoke as the first probe
+- then calibrated uncertainty distillation:
+  - temperature-scaled KL
+  - entropy-gated KL
+  - later variance-aware teacher targets
 
 as target-rich supervision on the same artifact format.
 
@@ -431,9 +471,9 @@ Branch note:
 
 Nearest tractable tests:
 
-1. EMA-teacher KL on the `state_book + freeze300` anchor
-2. matched random-init EMA-KL separator
-3. KL weight ladder before pruning the branch
+1. keep the live EMA-KL smoke as H13a
+2. move the next real follow-on to calibrated uncertainty KL
+3. use matched random-init separators before crediting the hardmax path
 
 Priority:
 
@@ -447,38 +487,152 @@ Current status:
   - [README.md](/home/zaytor/transformer_research/parameter-golf/research/iterations/generated/20260404_224347_mlx-h13-distribution-shape-statebook-freeze300-smoke/README.md)
 - the key separator run is `random-ema-kl010`
 
+Interpretation update:
+
+- H13 is no longer "plain EMA-KL until something happens"
+- H13 is now "use the EMA-KL smoke as a probe, then pivot to calibrated uncertainty distillation if the branch remains alive"
+
+### H15. Statebook anti-collapse on `freeze300`
+
+Claim:
+
+- the transferred `state_book` is already helping exact BPB
+- but the discrete controller is still almost fully collapsed inside the LM
+- explicit anti-collapse losses should be tested before opening more transfer variants
+- if naive anti-collapse is not enough, the next fix should attack codebook optimization plus latent dynamics directly
+
+Mechanistic backfill:
+
+- [20260404_freeze_family_mechanistic_read.md](/home/zaytor/transformer_research/parameter-golf/research/project_wide/20260404_freeze_family_mechanistic_read.md)
+
+Branch note:
+
+- [20260405_hardmax_statebook_anticollapse_leg.md](/home/zaytor/transformer_research/parameter-golf/research/project_wide/20260405_hardmax_statebook_anticollapse_leg.md)
+
+This branch is now split:
+
+1. H15a naive anti-collapse
+   - occupancy / commitment / boundary-conditioned transition pressure
+2. H15b `SimVQ + NextLat`
+   - shared latent-basis codebook reparameterization
+   - explicit next-state prediction on the hardmax path
+
+Nearest tractable tests:
+
+1. treat H15a as the baseline read for the anti-collapse family
+2. close H15b as a negative result in its current implementation
+3. promote H16 on the same `freeze300` anchor
+4. only revisit deeper anti-collapse architecture changes if H16/H2 leave clear headroom
+
+Current status:
+
+- first anti-collapse sweep is staged and launched:
+  - [manifest.json](/home/zaytor/transformer_research/parameter-golf/research/iterations/generated/20260405_011602_mlx-hardmax-statebook-anticollapse-freeze300-smoke/manifest.json)
+  - [README.md](/home/zaytor/transformer_research/parameter-golf/research/iterations/generated/20260405_011602_mlx-hardmax-statebook-anticollapse-freeze300-smoke/README.md)
+- H15b `SimVQ + NextLat` smoke is now also staged and launched:
+  - [manifest.json](/home/zaytor/transformer_research/parameter-golf/research/iterations/generated/20260405_042706_mlx-hardmax-statebook-simvq-nextlat-freeze300-smoke/manifest.json)
+  - [README.md](/home/zaytor/transformer_research/parameter-golf/research/iterations/generated/20260405_042706_mlx-hardmax-statebook-simvq-nextlat-freeze300-smoke/README.md)
+- H15b exact reads are now effectively in:
+  - `freeze300-simvq` = `1.87679221`
+  - `freeze300-simvq-usageH010-commit010` = `1.88071773`
+  - `freeze300-simvq-nextlat005` = `1.88572483`
+  - `freeze300-simvq-usageH010-commit010-nextlat005` = `1.87700218`
+  - all are materially below the `freeze300` anchor `1.82215938`
+- H15b continuation sweep for the unresolved arms is now live:
+  - [manifest.json](/home/zaytor/transformer_research/parameter-golf/research/iterations/generated/20260405_054811_mlx-hardmax-statebook-simvq-nextlat-freeze300-followup/manifest.json)
+
+Interpretation:
+
+- H15a is the naive baseline for this family
+- do not treat occupancy-only improvements as the final answer
+- H15b `SimVQ + NextLat` is now a closed negative result in its current form
+- the next active branch is H16 residual feedback / error-memory
+
+### H16. Residual feedback / error-mirror supervision
+
+Claim:
+
+- persistent residual direction is information about the latent variable the
+  model is failing to track
+- next-token loss currently treats repeated errors as independent supervision
+- factorized residual ACF should tell us which error families remain
+  structurally persistent after hardmax transfer
+- a cheap novelty-weighted loss is the lowest-risk first intervention before
+  building a real residual mirror state
+
+Branch note:
+
+- [20260404_residual_feedback_lane.md](/home/zaytor/transformer_research/parameter-golf/research/project_wide/20260404_residual_feedback_lane.md)
+
+Current status:
+
+- factorized residual ACF is implemented in:
+  - [analyze_residual_autocorrelation.py](/home/zaytor/transformer_research/parameter-golf/tools/analyze_residual_autocorrelation.py)
+- residual-novelty token weighting is implemented in:
+  - [residual_feedback.py](/home/zaytor/transformer_research/parameter-golf/residual_feedback.py)
+  - [train_gpt_mlx.py](/home/zaytor/transformer_research/parameter-golf/train_gpt_mlx.py)
+- first sweep template is staged:
+  - [mlx_hardmax_residual_novelty_freeze300_smoke.example.json](/home/zaytor/transformer_research/parameter-golf/research/iterations/templates/mlx_hardmax_residual_novelty_freeze300_smoke.example.json)
+- this branch is now promoted after the H15b miss
+- first H16b smoke is now staged and launched:
+  - [manifest.json](/home/zaytor/transformer_research/parameter-golf/research/iterations/generated/20260405_164756_mlx-hardmax-residual-novelty-freeze300-smoke/manifest.json)
+  - first claimed hosts:
+    - `freeze300-baseline` on `mini04`
+    - `freeze300-residnov-090-110` on `mini06`
+
+Nearest tractable tests:
+
+1. run factorized residual ACF on recovered `random`, `state_book`,
+   `freeze100`, and `freeze200`
+2. compare which factors lose persistence vs which factors only lose mean NLL
+3. queue the `freeze300` residual-novelty weighting smoke as the next bounded
+   execution branch
+4. only then consider a real residual mirror state
+
+Interpretation:
+
+- H16a = factorized residual ACF readout
+- H16b = novelty-weighted loss on the hardmax `freeze300` anchor
+- H16c = residual mirror KV/state, only if H16b looks mechanistically alive
+
 ## Queue order
 
 ### Queue A: Immediate
 
 These are the next theory tests to engineer and queue.
 
-1. H2 canonical attention-shaping sweep
+1. H16a factorized residual ACF comparison
+   - use recovered `random`, `state_book`, `freeze100`, and `freeze200`
+
+2. H16b residual-novelty weighting on `freeze300`
+   - first bounded post-H15b training intervention
+
+3. H2 canonical attention-shaping sweep
    - already staged
    - use the `freeze300` anchor
 
-2. H1 self-distill / trunk-logit supervision refresh
+4. H1 self-distill / trunk-logit supervision refresh
    - adapt the teacher-distill lane to the current local best LM family
 
-3. H3 microsteps rerun on the winning transfer object
+5. H3 microsteps rerun on the winning transfer object
    - not on `trace-core`
    - preferably on the best H2 conditioning locus
 
 ### Queue B: Next
 
-4. H4 bidirectional conditioning
-5. H8 self-distillation + hardmax verification
-6. H5 per-factor confidence
-7. H12 compiled-state supervision density
-8. H13 distribution-shape supervision
+6. H12 register/curriculum compiled-state supervision reboot
+7. H13 calibrated uncertainty distillation reboot
+8. H4 bidirectional conditioning
+9. H8 self-distillation + hardmax verification
+10. H5 per-factor confidence
 
 ### Queue C: Later
 
-9. H9 cross-model `state_book` transfer
-10. H10 KV cache compaction
-11. H11 face / mirror operator-state trace
-12. H6 emotion vectors
-13. H7 certainty-ordered generation
+11. H9 cross-model `state_book` transfer
+12. H10 KV cache compaction
+13. H11 face / mirror operator-state trace
+14. H6 emotion vectors
+15. H7 certainty-ordered generation
 
 ## Concrete engineering tasks
 
@@ -492,7 +646,18 @@ Question:
 
 - does always-on attention shaping beat residual conditioning?
 
-### Task 2: Convert teacher-distill into trunk-certainty distill
+### Task 2: Run H16b novelty-weighting sweep
+
+Use:
+
+- [mlx_hardmax_residual_novelty_freeze300_smoke.example.json](/home/zaytor/transformer_research/parameter-golf/research/iterations/templates/mlx_hardmax_residual_novelty_freeze300_smoke.example.json)
+
+Question:
+
+- does novelty-weighted loss buy BPB or mechanistic ACF improvement on the
+  winning `freeze300` anchor?
+
+### Task 3: Convert teacher-distill into trunk-certainty distill
 
 Use:
 
@@ -507,7 +672,7 @@ Question:
 
 - can the controller learn the trunk's own certainty floor?
 
-### Task 3: Retarget microsteps
+### Task 4: Retarget microsteps
 
 Do not spend more budget on `trace-core` microsteps.
 
@@ -520,7 +685,7 @@ Question:
 
 - does controller refinement help once the conditioning locus is correct?
 
-### Task 4: Stage compiled-state supervision tests
+### Task 4: Reboot compiled-state supervision tests
 
 Use:
 
@@ -528,8 +693,11 @@ Use:
 
 Start with:
 
-- train-only multi-horizon token heads
-- then short rollout residual targets
+- treat the live naive multi-horizon smoke as a probe
+- then reboot to:
+  - register/state-slot future supervision
+  - forward curriculum across horizons
+  - only later add rollout residual targets
 
 Question:
 
@@ -548,9 +716,9 @@ Interpretation to watch:
 - `random-h123-aux005` is the key separator in the live H12 smoke
 - if random-init gains nearly as much as transferred `state_book`, then supervision density is doing most of the work
 - if transferred `state_book` gains substantially more, then the vocabulary transfer is real structure that richer supervision can exploit
-- if `0.05` is only weakly positive, do not prune H12 yet; escalate the auxiliary weight ladder to `0.1` and `0.2`
+- if naive H12 is weak, do not keep stretching it; reboot to register/curriculum form
 
-### Task 5: Stage distribution-shape supervision tests
+### Task 5: Reboot distribution-shape supervision tests
 
 Use:
 
@@ -558,9 +726,12 @@ Use:
 
 Start with:
 
-- EMA-teacher KL on the current `state_book + freeze300` anchor
-- matched random-init separator
-- KL weight ladder before pruning
+- keep the live EMA-KL smoke as H13a
+- then move to:
+  - temperature-scaled KL
+  - entropy-gated KL
+  - later variance-aware targets
+- keep matched random-init separators before crediting the hardmax path
 
 Question:
 

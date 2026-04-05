@@ -1,0 +1,128 @@
+{
+  "iteration_id": "iter_YYYYMMDD_HHMMSS_hardmax_residual_novelty_freeze300_smoke",
+  "sweep_slug": "mlx-hardmax-residual-novelty-freeze300-smoke",
+  "dispatch_mode": "queue",
+  "queue_parallelism": 2,
+  "wrapper_script": "/home/zaytor/transformer_research/parameter-golf/run_train_gpt_mlx_config.py",
+  "script": "/home/zaytor/transformer_research/parameter-golf/train_gpt_mlx.py",
+  "support_files": [
+    "/home/zaytor/transformer_research/parameter-golf/train_gpt_mlx.py",
+    "/home/zaytor/transformer_research/parameter-golf/residual_feedback.py",
+    "/home/zaytor/transformer_research/parameter-golf/logic_register_mlx.py",
+    "/home/zaytor/transformer_research/parameter-golf/early_exit_aux.py",
+    "/home/zaytor/transformer_research/parameter-golf/text_prosody_features.py",
+    "/home/zaytor/transformer_research/parameter-golf/structural_branching.py",
+    "/home/zaytor/transformer_research/parameter-golf/sequential_data_filter.py",
+    "/home/zaytor/transformer_research/parameter-golf/token_category_weighting.py",
+    "/home/zaytor/transformer_research/parameter-golf/token_context_weighting.py",
+    "/home/zaytor/transformer_research/parameter-golf/apollo_mlx.py",
+    "/home/zaytor/transformer_research/parameter-golf/ternary_quant_mlx.py",
+    "/home/zaytor/transformer_research/parameter-golf/turbo_quant_mlx.py"
+  ],
+  "post_run_hardmax_diagnostics": {
+    "output_dir": "hardmax_transfer_diagnostics",
+    "skip_existing": true,
+    "skip_residual": true,
+    "remote_analyzers": true,
+    "remote_host": "mini10",
+    "include_causal_ablation": true,
+    "include_logit_factors": true,
+    "val_max_seqs": 2,
+    "analysis_max_batches": 2,
+    "factor_max_batches": 1,
+    "factor_num_factors": 2,
+    "factor_top_tokens": 4
+  },
+  "base_env": {
+    "DATA_PATH": "~/transformer_research/parameter-golf/data/datasets/fineweb10B_sp1024",
+    "TOKENIZER_PATH": "~/transformer_research/parameter-golf/data/tokenizers/fineweb_1024_bpe.model",
+    "VOCAB_SIZE": 1024,
+    "TRAIN_BATCH_TOKENS": 8192,
+    "TRAIN_LOG_EVERY": 100,
+    "VAL_BATCH_SIZE": 524288,
+    "VAL_LOSS_EVERY": 0,
+    "VAL_MAX_SEQS": 0,
+    "ITERATIONS": 800,
+    "MAX_WALLCLOCK_SECONDS": 0,
+    "WARMUP_STEPS": 0,
+    "WARMDOWN_FRACTION": 0.0,
+    "MLX_COMPILE": 0,
+    "TIE_EMBEDDINGS": 0,
+    "MLP_LEAKY_SLOPE": 0.5,
+    "QUANT_FORMAT": "turbo_block_v1",
+    "TURBO_BLOCK_SIZE": 256,
+    "TURBO_EMBED_EXPORT": 1,
+    "TURBO_MSE_BITS": 3,
+    "TURBO_PROD_BITS": 4,
+    "TURBO_QAT": 1,
+    "TURBO_QAT_LAMBDA": 0.01,
+    "TURBO_QAT_START_FRAC": 0.5,
+    "TURBO_QAT_RAMP_FRAC": 0.25,
+    "EMA_ENABLED": 0,
+    "MODEL_DIM": 512,
+    "NUM_HEADS": 8,
+    "NUM_KV_HEADS": 4,
+    "NUM_LAYERS": 9,
+    "NUM_LAYER_TEMPLATES": 9,
+    "MLP_MULT": 2,
+    "OUT_DIR": "logs",
+    "HARDMAX_STRUCT_NUM_STATES": 8,
+    "HARDMAX_STRUCT_DIM": 32,
+    "HARDMAX_STRUCT_LAYER_INDEX": 3,
+    "HARDMAX_STRUCT_ROUTER_START_LAYER": 4,
+    "HARDMAX_STRUCT_TEMPERATURE": 1.0,
+    "HARDMAX_STRUCT_ROUTE_RESIDUAL_BUDGET": 0,
+    "HARDMAX_STRUCT_OPERATOR_PRIOR_SCALE": 1.0,
+    "HARDMAX_STRUCT_RESET_PRIOR_SCALE": 1.0,
+    "HARDMAX_STRUCT_USAGE_BALANCE_WEIGHT": 0.01,
+    "HARDMAX_STRUCT_DIVERSITY_WEIGHT": 0.01,
+    "HARDMAX_STRUCT_PREDICT_WEIGHT": 0.05,
+    "HARDMAX_STRUCT_CONFIDENCE_WEIGHT": 0.02,
+    "HARDMAX_STRUCT_OPERATOR_WEIGHT": 1.0,
+    "HARDMAX_STRUCT_TOKEN_CLASS_WEIGHT": 0.5,
+    "HARDMAX_STRUCT_BOUNDARY_WEIGHT": 1.0,
+    "HARDMAX_STRUCT_QUOTE_WEIGHT": 0.25,
+    "HARDMAX_STRUCT_INIT_PATH": "/home/zaytor/transformer_research/parameter-golf/research/iterations/generated/20260403_hardmax_trace_transfer_assets/trace_pretrain_export_8state_hardmax_controller_init.npz",
+    "HARDMAX_STRUCT_INIT_MODE": "state_book",
+    "HARDMAX_STRUCT_STATEBOOK_FREEZE_STEPS": 300
+  },
+  "runs": [
+    {
+      "slug": "freeze300-baseline",
+      "notes": "Current freeze300 hardmax anchor with no residual novelty weighting.",
+      "env": {
+        "RUN_ID": "mlx-hardmax-residual-novelty-freeze300-smoke_freeze300-baseline"
+      }
+    },
+    {
+      "slug": "freeze300-residnov-090-110",
+      "notes": "Light novelty weighting: mostly neutral, only modestly upweight novel residual directions.",
+      "env": {
+        "RUN_ID": "mlx-hardmax-residual-novelty-freeze300-smoke_freeze300-residnov-090-110",
+        "RESIDUAL_NOVELTY_WEIGHTING_ENABLED": 1,
+        "RESIDUAL_NOVELTY_MIN_SCALE": 0.90,
+        "RESIDUAL_NOVELTY_MAX_SCALE": 1.10
+      }
+    },
+    {
+      "slug": "freeze300-residnov-075-125",
+      "notes": "Default novelty weighting window for repeated-vs-novel residual directions.",
+      "env": {
+        "RUN_ID": "mlx-hardmax-residual-novelty-freeze300-smoke_freeze300-residnov-075-125",
+        "RESIDUAL_NOVELTY_WEIGHTING_ENABLED": 1,
+        "RESIDUAL_NOVELTY_MIN_SCALE": 0.75,
+        "RESIDUAL_NOVELTY_MAX_SCALE": 1.25
+      }
+    },
+    {
+      "slug": "freeze300-residnov-050-150",
+      "notes": "Aggressive novelty weighting to test whether the lane is signal-limited or quickly destabilized.",
+      "env": {
+        "RUN_ID": "mlx-hardmax-residual-novelty-freeze300-smoke_freeze300-residnov-050-150",
+        "RESIDUAL_NOVELTY_WEIGHTING_ENABLED": 1,
+        "RESIDUAL_NOVELTY_MIN_SCALE": 0.50,
+        "RESIDUAL_NOVELTY_MAX_SCALE": 1.50
+      }
+    }
+  ]
+}

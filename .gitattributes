@@ -13,3 +13,7 @@ research/representation_learning/reports/ export-ignore
 research/representation_learning/runs/ export-ignore
 data/datasets/ export-ignore
 data/tokenizers/ export-ignore
+research/branch_memory/nodes/ export-ignore
+research/branch_memory/derived/ export-ignore
+research/branch_memory/*.log export-ignore
+research/iterations/derived/ export-ignore

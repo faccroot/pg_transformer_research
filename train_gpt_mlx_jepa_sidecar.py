@@ -119,6 +119,15 @@ class GPTJEPASidecar(base.GPT):
         polarity_seed_weight: float = 0.0,
         polarity_sparse_weight: float = 0.0,
         polarity_smooth_weight: float = 0.0,
+        early_exit_layer_index: int = -1,
+        early_exit_horizons: tuple[int, ...] = (),
+        early_exit_aux_weight: float = 0.0,
+        early_exit_head_init_std: float = 0.005,
+        early_exit_cascaded_enabled: bool = False,
+        early_exit_condition_init_std: float = 0.001,
+        early_exit_branch_draft_enabled: bool = False,
+        early_exit_branch_conf_threshold: float = 0.70,
+        early_exit_branch_max_draft_tokens: int = 1,
         sidecar_chunk_size: int,
         sidecar_tap_layer: int,
         sidecar_state_dim: int,
@@ -174,6 +183,15 @@ class GPTJEPASidecar(base.GPT):
             polarity_seed_weight=polarity_seed_weight,
             polarity_sparse_weight=polarity_sparse_weight,
             polarity_smooth_weight=polarity_smooth_weight,
+            early_exit_layer_index=early_exit_layer_index,
+            early_exit_horizons=early_exit_horizons,
+            early_exit_aux_weight=early_exit_aux_weight,
+            early_exit_head_init_std=early_exit_head_init_std,
+            early_exit_cascaded_enabled=early_exit_cascaded_enabled,
+            early_exit_condition_init_std=early_exit_condition_init_std,
+            early_exit_branch_draft_enabled=early_exit_branch_draft_enabled,
+            early_exit_branch_conf_threshold=early_exit_branch_conf_threshold,
+            early_exit_branch_max_draft_tokens=early_exit_branch_max_draft_tokens,
         )
         if self.num_registers > 0:
             raise ValueError("JEPA sidecar prototype currently requires NUM_REGISTERS=0")
@@ -526,11 +544,28 @@ class GPTJEPASidecar(base.GPT):
         pred_weight: float | None = None,
         sigreg_weight: float | None = None,
         spherical_weight: float | None = None,
-    ) -> tuple[mx.array, mx.array, mx.array, mx.array, mx.array]:
+    ) -> tuple[mx.array, mx.array, mx.array, mx.array, mx.array, mx.array]:
         pred_weight = self.sidecar_pred_weight if pred_weight is None else pred_weight
         sigreg_weight = self.sidecar_sigreg_weight if sigreg_weight is None else sigreg_weight
         spherical_weight = self.sidecar_spherical_weight if spherical_weight is None else spherical_weight
-        final_hidden, _tap_hidden, aux = self.forward_with_sidecar_hidden_aux(input_ids, operator_codes=operator_codes)
+        effective_early_exit_weight = float(self._early_exit_aux_weight)
+        capture_layers = (
+            (self._early_exit_layer_index,)
+            if bool(self.early_exit_heads) and effective_early_exit_weight > 0.0
+            else ()
+        )
+        if capture_layers:
+            final_hidden, captured, aux = self.forward_hidden_with_aux(
+                input_ids,
+                capture_layers=capture_layers,
+                operator_codes=operator_codes,
+            )
+        else:
+            final_hidden, _tap_hidden, aux = self.forward_with_sidecar_hidden_aux(
+                input_ids,
+                operator_codes=operator_codes,
+            )
+            captured = {}
         ce_loss = self.token_ce_from_hidden(final_hidden, target_ids)
         zero = mx.array(0.0, dtype=mx.float32)
         if aux_scale <= 0.0:
@@ -540,14 +575,19 @@ class GPTJEPASidecar(base.GPT):
             assert side_states is not None
             pred_loss, sigreg_loss, spherical_loss = self.sidecar_terms_from_states(side_states)
         polarity_seed_loss, polarity_sparse_loss, polarity_smooth_loss = self.polarity_loss_terms_from_aux(aux)
+        early_exit_loss = zero
+        if bool(self.early_exit_heads) and effective_early_exit_weight > 0.0:
+            early_exit_hidden = captured.get(self._early_exit_layer_index)
+            if early_exit_hidden is not None:
+                early_exit_loss = self.early_exit_aux_loss(early_exit_hidden, target_ids)
         total = ce_loss + mx.array(aux_scale, dtype=mx.float32) * (
             pred_weight * pred_loss + sigreg_weight * sigreg_loss + spherical_weight * spherical_loss
-        ) + (
+        ) + effective_early_exit_weight * early_exit_loss + (
             self.polarity_seed_weight * polarity_seed_loss
             + self.polarity_sparse_weight * polarity_sparse_loss
             + self.polarity_smooth_weight * polarity_smooth_loss
         )
-        return total, ce_loss, pred_loss, sigreg_loss, spherical_loss
+        return total, ce_loss, pred_loss, sigreg_loss, spherical_loss, early_exit_loss
 
 
 def exportable_flat_state(model: GPTJEPASidecar) -> dict[str, mx.array]:
@@ -649,6 +689,19 @@ def _compatible_sidecar_base_kwargs(
 ) -> dict[str, object]:
     """Filter base GPT kwargs to the subset accepted by the older sidecar ctor."""
     kwargs = base.gpt_kwargs_from_args(args, sp)
+    kwargs.update(
+        {
+            "early_exit_layer_index": args.early_exit_layer_index,
+            "early_exit_horizons": base.parse_horizons(args.early_exit_horizons),
+            "early_exit_aux_weight": args.early_exit_aux_weight,
+            "early_exit_head_init_std": args.early_exit_head_init_std,
+            "early_exit_cascaded_enabled": args.early_exit_cascaded_enabled,
+            "early_exit_condition_init_std": args.early_exit_condition_init_std,
+            "early_exit_branch_draft_enabled": args.early_exit_branch_draft_enabled,
+            "early_exit_branch_conf_threshold": args.early_exit_branch_conf_threshold,
+            "early_exit_branch_max_draft_tokens": args.early_exit_branch_max_draft_tokens,
+        }
+    )
     accepted = set(inspect.signature(GPTJEPASidecar.__init__).parameters)
     accepted.discard("self")
     return {key: value for key, value in kwargs.items() if key in accepted}

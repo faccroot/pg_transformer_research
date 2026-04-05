@@ -475,6 +475,7 @@ class HardmaxStructuralController(nn.Module):
         compute_power: float = 1.0,
         operator_prior_scale: float = 1.0,
         reset_prior_scale: float = 1.0,
+        simvq_enabled: bool = False,
     ):
         super().__init__()
         if state_dim <= 0:
@@ -488,6 +489,7 @@ class HardmaxStructuralController(nn.Module):
         self.compute_power = max(float(compute_power), 1.0e-4)
         self.operator_prior_scale = float(operator_prior_scale)
         self.reset_prior_scale = max(float(reset_prior_scale), 0.0)
+        self.simvq_enabled = bool(simvq_enabled)
 
         self.proj_in = CastedLinear(model_dim, state_dim)
         self.recur = CastedLinear(state_dim, state_dim)
@@ -496,12 +498,21 @@ class HardmaxStructuralController(nn.Module):
         self.gate = mx.zeros((model_dim,), dtype=mx.float32)
 
         self.state_book = (mx.random.normal((num_states, state_dim), dtype=mx.float32) * init_std).astype(mx.float32)
+        self.state_book_proj = CastedLinear(state_dim, state_dim) if self.simvq_enabled else None
+        if self.state_book_proj is not None:
+            self.state_book_proj.weight = mx.eye(state_dim, dtype=mx.float32)
         self.operator_state = (mx.random.normal((4, state_dim), dtype=mx.float32) * init_std).astype(mx.float32)
         self.polarity_state = (mx.random.normal((state_dim,), dtype=mx.float32) * init_std).astype(mx.float32)
         self._eye = mx.eye(num_states, dtype=mx.float32)
 
     def set_temperature(self, temperature: float) -> None:
         self.temperature = max(float(temperature), 1.0e-4)
+
+    def effective_state_book(self) -> mx.array:
+        book = self.state_book.astype(mx.float32)
+        if self.state_book_proj is None:
+            return book
+        return self.state_book_proj(book.astype(book.dtype)).astype(mx.float32)
 
     def _hard_assign(self, probs: mx.array) -> tuple[mx.array, mx.array]:
         state_idx = mx.argmax(probs, axis=-1).astype(mx.int32)
@@ -539,7 +550,7 @@ class HardmaxStructuralController(nn.Module):
                 axis=-1,
             )
         )
-        book = self.state_book.astype(mx.float32)
+        book = self.effective_state_book().astype(mx.float32)
         denom = mx.maximum(mx.linalg.norm(book, axis=-1, keepdims=True), mx.array(1.0e-6, dtype=mx.float32))
         norm_book = book / denom
         cosine = norm_book @ norm_book.T
@@ -615,7 +626,7 @@ class HardmaxStructuralController(nn.Module):
             logits = self.state_logits(proposal).astype(mx.float32)
             probs = mx.softmax(logits / self.temperature, axis=-1).astype(mx.float32)
             assign, state_idx = self._hard_assign(probs)
-            state_basis = assign @ self.state_book.astype(assign.dtype)
+            state_basis = assign @ self.effective_state_book().astype(assign.dtype)
             struct_state = mx.tanh(proposal + state_basis.astype(proposal.dtype) + prev_state)
             confidence, budget = self._confidence_and_budget(probs)
             prev_state = struct_state
@@ -678,6 +689,9 @@ class StaticStructuralAdapter(nn.Module):
 
     def set_temperature(self, temperature: float) -> None:
         self.temperature = max(float(temperature), 1.0e-4)
+
+    def effective_state_book(self) -> mx.array:
+        return self.state_book.astype(mx.float32)
 
     def regularization_losses(self, aux: dict[str, mx.array] | None) -> tuple[mx.array, mx.array, mx.array]:
         zero = mx.array(0.0, dtype=mx.float32)

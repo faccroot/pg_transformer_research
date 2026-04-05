@@ -1,0 +1,13 @@
+[Unit]
+Description=Parameter Golf Branch Memory Daemon
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/transformer_research/parameter-golf
+ExecStart=/usr/bin/env python3 %h/transformer_research/parameter-golf/tools/branch_memoryd.py
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
