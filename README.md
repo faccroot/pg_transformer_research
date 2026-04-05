@@ -8,12 +8,22 @@ diagnostics, research notes, and training-system experiments.
 
 - Official challenge repo: <https://github.com/openai/parameter-golf>
 - Public fork guide: [PUBLIC_FORK_GUIDE.md](./PUBLIC_FORK_GUIDE.md)
+- Internal-name -> literature-name map: [TRANSLATION_LAYER.md](./TRANSLATION_LAYER.md)
 
 This repo is not one clever trick. It is a portfolio of direct hits and live
 bridges into the exact "weird breakthrough" areas the challenge is asking for:
 
 - direct hits: `ternary/low-bit`, `JEPA/latent prediction`, `slow memory / long context`
 - strong bridges: `depth recurrence`, `H-net / hierarchical tokenization`, `TTT / adaptive compute`, `random-map adapters`
+
+Many internal repo names are local shorthand. The closest literature-language
+translation is in [TRANSLATION_LAYER.md](./TRANSLATION_LAYER.md). The short
+version is:
+
+- `state_book` -> discrete latent state vocabulary / VQ-style codebook object
+- `segment-prev-read` -> chunk-clock recurrent memory
+- helper/manager bus -> adaptive chunk-level compute / TTT substrate
+- geometry prior -> random-basis structural prior
 
 We trained a tiny controller to execute self-generated programs on a synthetic
 VM. Then we transferred part of it into a language model. FineWeb BPB
