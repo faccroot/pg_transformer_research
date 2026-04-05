@@ -9,6 +9,12 @@ diagnostics, research notes, and training-system experiments.
 - Official challenge repo: <https://github.com/openai/parameter-golf>
 - Public fork guide: [PUBLIC_FORK_GUIDE.md](./PUBLIC_FORK_GUIDE.md)
 
+This repo is not one clever trick. It is a portfolio of direct hits and live
+bridges into the exact "weird breakthrough" areas the challenge is asking for:
+
+- direct hits: `ternary/low-bit`, `JEPA/latent prediction`, `slow memory / long context`
+- strong bridges: `depth recurrence`, `H-net / hierarchical tokenization`, `TTT / adaptive compute`, `random-map adapters`
+
 We trained a tiny controller to execute self-generated programs on a synthetic
 VM. Then we transferred part of it into a language model. FineWeb BPB
 improved. This is not yet the model training on its own internal trace; it is
@@ -73,7 +79,26 @@ Read:
 
 - [20260329_turboquant_handoff_segmentlong.md](./research/project_wide/20260329_turboquant_handoff_segmentlong.md)
 
-### 3. Our Best Mainline Is Strong Because It Is Small
+### 3. Training-Loop Structure Alone Can Move BPB
+
+One of the most useful recent results is not architectural at all. A slimmer
+grouped/current-size trainer loop beat the base curriculum trainer on the same
+host:
+
+- `current-size-curriculum`: `2.23956102`
+- `slim-curriculum`: `2.20450494`
+- same host: `mini10`
+- delta: `-0.03505608`
+
+That matters because it says some of the remaining headroom is in trainer shape
+and order-of-operations, not only in model architecture. We take that as a
+precursor to later kernel/fusion work, not a replacement for it.
+
+Read:
+
+- [20260404_mlx-grouped-slim-transfer-ab6-180s/results_summary.md](./research/iterations/generated/20260404_mlx-grouped-slim-transfer-ab6-180s/results_summary.md)
+
+### 4. Our Best Mainline Is Strong Because It Is Small
 
 The strongest trusted competition-facing foundation is the Turbo/QAT current-size
 stack. Its interesting property is not only score. It is score **plus**
@@ -133,30 +158,24 @@ This repo is not just wins. A lot of the value is in what we ruled out.
 The pruning matters. It means the positive branches are surviving a real search
 process, not one lucky idea.
 
-## Why This Naturally Lands In The Organizers' Buckets
+## This Already Lands In The Organizers' Buckets
 
-We did not retroactively fit our work into the organizers' list. Several lanes
-landed there independently:
+We did not back-fit our work into the organizer list after the fact. Several
+lanes landed there on their own:
 
-- `JEPA / super long context`
-  - arrived at through segment-clock memory and slower summaries
-- `parameter tying / recurrence`
-  - arrived at through reused layer templates and explicit state/controller
-    paths
-- `test-time compute / adaptive training`
-  - arrived at through profiling, then helper workers, replay queues, teacher
-    caches, and an external manager
-- `ternary quantization`
-  - directly implemented in [ternary_quant_mlx.py](./ternary_quant_mlx.py)
+- direct hits:
+  - `ternary / low-bit` via Turbo/QAT and [ternary_quant_mlx.py](./ternary_quant_mlx.py)
+  - `JEPA / latent prediction` via sidecar, segment memory, SIGReg, and hidden-state objectives
+  - `super long context / slow memory` via `segment-prev-read`, prefix/compiler memory, and helper caches
+- strong bridges:
+  - `universal transformer / depth recurrence` via layer-template reuse and controller/state paths
+  - `H-net tokenization` via segment/harmonic/prosody/boundary work
+  - `state-space / E2E TTT / adaptive compute` via replay, hidden-state caches, helper workers, and the manager bus
+  - `random-linear-map adapters` via the geometry-prior / representation-transfer lane
 
-Other requested areas are clear bridges from the current codebase:
-
-- `1-bit quantization`
-- `H-net tokenization`
-- `text diffusion`
-- `learning adapters on random linear maps`
-- `state-space / E2E TTT`
-- `megakernels`
+The cleaner way to say it is: this repo keeps rediscovering the categories the
+challenge cares about from first principles, then testing whether they actually
+move BPB.
 
 ## If You Want To Read One Thing
 
