@@ -9,9 +9,11 @@ diagnostics, research notes, and training-system experiments.
 - Official challenge repo: <https://github.com/openai/parameter-golf>
 - Public fork guide: [PUBLIC_FORK_GUIDE.md](./PUBLIC_FORK_GUIDE.md)
 
-We trained a tiny controller to execute programs on a synthetic VM. Then we
-transferred part of it into a language model. FineWeb BPB improved. We do not
-fully understand why execution-trace structure helps natural-language
+We trained a tiny controller to execute self-generated programs on a synthetic
+VM. Then we transferred part of it into a language model. FineWeb BPB
+improved. This is not yet the model training on its own internal trace; it is
+self-generated algorithmic supervision transferred into language modeling. We
+do not fully understand why execution-trace structure helps natural-language
 compression, but it does:
 
 - plain control: `1.88888776`
@@ -36,6 +38,16 @@ The cleanest weird result in the repo is the hardmax/controller lane:
 
 This is not just "add a small side path." The matched random structural
 baseline is already strong, and the trace-pretrained transfer still beats it.
+
+The useful framing is:
+
+> the hardmax path acts like a low-bandwidth structural compiler pass for the
+> softmax LM
+
+Today that claim is still modest. We are not showing that the LM trains on its
+own internal trace or that an inner optimizer has emerged. We are showing that
+self-generated execution-state supervision can learn a reusable structural
+state vocabulary that transfers into language modeling.
 
 Read:
 
