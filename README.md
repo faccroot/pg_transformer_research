@@ -144,14 +144,19 @@ Then we try to strip the result back to a tiny exportable artifact.
 
 ## Multi-Agent Research Orchestration
 
-This repo also treats research coordination itself as a systems problem. Instead
-of a linear backlog, we use a persisted MCTS-like experiment tree: branch notes,
-sweep manifests, observed results, and post-run diagnostics together define the
-current search frontier. Agents work on local branches of that tree, while an
-orchestrator reprioritizes promising nodes, expands new hypotheses, and prunes
-dead ones. Today this is closer to a persisted hypothesis tree with manual
-policy updates than to a literal UCB/PUCT search engine, but it already acts as
-an explicit multi-agent planning substrate for parallel research.
+We treat research coordination itself as a systems problem. This repo includes
+a persisted branch-memory control plane: machine-readable node bundles, sweep
+manifests, observed results, and queue/runtime snapshots that together define
+an MCTS-like research tree. Agents operate on local branches of that tree,
+while an orchestrator expands promising nodes, reprioritizes frontier work, and
+prunes dead branches. It is not a literal Monte Carlo search engine yet, but
+it already behaves like one in practice: structured search state persists
+across sessions, parallel agents avoid duplicate work, and experiment outcomes
+feed back into the next branch decisions.
+
+The goal is to make research state first-class and machine-readable, so agents
+can search the experiment tree directly instead of coordinating through ad hoc
+chat and linear task lists.
 
 ## What We Killed And Why
 
