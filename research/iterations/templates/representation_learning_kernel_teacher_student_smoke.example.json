@@ -1,0 +1,57 @@
+{
+  "notes": "Queue-mode smoke for the first kernel-student consumer. This trains a small MLX GPT backbone plus a canonical projection head against the text-conditioned best-of-N teacher artifact.",
+  "sweep_slug": "representation-learning-kernel-teacher-student-smoke",
+  "dispatch_mode": "queue",
+  "queue_parallelism": 1,
+  "queue_retry_attempts": 2,
+  "script": "tools/representation_learning/train_kernel_teacher_student.py",
+  "wrapper_script": "run_cli_json_config.py",
+  "support_files": [
+    "tools/representation_learning/schemas.py",
+    "tools/representation_learning/build_kernel_teacher_text_dataset.py",
+    "tools/representation_learning/train_kernel_teacher_student.py",
+    "train_gpt_mlx.py",
+    "logic_register_mlx.py",
+    "early_exit_aux.py",
+    "text_prosody_features.py",
+    "structural_branching.py",
+    "token_category_weighting.py",
+    "token_context_weighting.py",
+    "sequential_data_filter.py",
+    "replay_signal_runtime.py",
+    "snapshot_signal_runtime.py",
+    "teacher_signal_runtime.py",
+    "curriculum_runtime.py",
+    "curriculum.py",
+    "apollo_mlx.py",
+    "turbo_quant_mlx.py",
+    "ternary_quant_mlx.py",
+    "data/tokenizers/fineweb_1024_bpe.model"
+  ],
+  "base_args": {
+    "teacher-dataset": "~/transformer_research/parameter-golf/research/representation_learning/priors/qwen_phi_olmo_kernel_teacher_text_v1.npz",
+    "tokenizer-path": "~/transformer_research/parameter-golf/data/tokenizers/fineweb_1024_bpe.model",
+    "output-dir": "~/transformer_research/parameter-golf/research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_smoke_v1",
+    "seed": 17,
+    "batch-size": 4,
+    "epochs": 2,
+    "learning-rate": 0.0003,
+    "max-seq-len": 256,
+    "val-fraction": 0.2,
+    "ce-weight": 0.25,
+    "distill-weight": 1.0,
+    "freeze-backbone": true,
+    "model-dim": 128,
+    "num-layers": 2,
+    "num-layer-templates": 2,
+    "num-heads": 8,
+    "num-kv-heads": 4,
+    "mlp-mult": 2
+  },
+  "runs": [
+    {
+      "slug": "kernel-student-smoke",
+      "notes": "Validate the first kernel-student path on the real Qwen/Phi/OLMo teacher artifact."
+    }
+  ]
+}

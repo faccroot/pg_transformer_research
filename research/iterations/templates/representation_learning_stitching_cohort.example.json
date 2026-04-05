@@ -1,0 +1,35 @@
+{
+  "notes": "Queue-mode cohort stitching verification over a SharedLatentGeometry artifact. This is a Hugging Face / PyTorch evaluation, not an MLX run. Use a host that already has transformers and the required source models available.",
+  "sweep_slug": "representation-learning-stitching-cohort",
+  "dispatch_mode": "queue",
+  "queue_parallelism": 1,
+  "queue_retry_attempts": 2,
+  "script": "tools/representation_learning/verify_model_stitching_cohort.py",
+  "wrapper_script": "run_cli_json_config.py",
+  "support_files": [
+    "tools/representation_learning/model_adapter.py",
+    "tools/representation_learning/extract_model_representation.py",
+    "tools/representation_learning/schemas.py",
+    "tools/representation_learning/verify_model_stitching.py",
+    "tools/representation_learning/verify_model_stitching_cohort.py"
+  ],
+  "base_args": {
+    "output_dir": "~/transformer_research/parameter-golf/research/representation_learning/reports/qwen_phi_olmo_stitching_cohort_v1",
+    "shared_geometry": "~/transformer_research/parameter-golf/research/representation_learning/priors/qwen_phi_olmo_gcca_shared_geometry_v1.npz",
+    "calibration_jsonl": "~/transformer_research/parameter-golf/research/representation_learning/calibration/compare_v1_calibration.jsonl",
+    "shared_layer": 12,
+    "max_examples": 128,
+    "train_fraction": 0.75,
+    "seed": 17,
+    "batch_size": 4,
+    "max_length": 1024,
+    "ridge_lambda": 0.0001,
+    "torch_dtype": "float16"
+  },
+  "runs": [
+    {
+      "slug": "qwen-phi-olmo-gcca-stitch",
+      "notes": "Run the first functional-transfer cohort matrix on the GCCA shared geometry."
+    }
+  ]
+}

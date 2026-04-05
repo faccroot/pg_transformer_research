@@ -1,0 +1,46 @@
+{
+  "iteration_id": "iter_YYYYMMDD_HHMMSS_curriculum_smoke",
+  "sweep_slug": "mlx-curriculum-smoke",
+  "dispatch_mode": "queue",
+  "wrapper_script": "/home/zaytor/transformer_research/parameter-golf/run_train_gpt_mlx_config.py",
+  "script": "/home/zaytor/transformer_research/parameter-golf/train_gpt_mlx_curriculum.py",
+  "support_files": [
+    "/home/zaytor/transformer_research/parameter-golf/train_gpt_mlx.py",
+    "/home/zaytor/transformer_research/parameter-golf/curriculum.py",
+    "/home/zaytor/transformer_research/parameter-golf/curriculum_runtime.py",
+    "/home/zaytor/transformer_research/parameter-golf/logic_register_mlx.py",
+    "/home/zaytor/transformer_research/parameter-golf/ternary_quant_mlx.py",
+    "/home/zaytor/transformer_research/parameter-golf/turbo_quant_mlx.py",
+    "/home/zaytor/transformer_research/parameter-golf/research/iterations/templates/curriculum_phase_plan.example.json",
+    "/home/zaytor/transformer_research/parameter-golf/research/iterations/generated/curriculum_smoke_features.npz"
+  ],
+  "base_env": {
+    "DATA_PATH": "~/transformer_research/parameter-golf/data/datasets/fineweb10B_sp1024",
+    "TOKENIZER_PATH": "~/transformer_research/parameter-golf/data/tokenizers/fineweb_1024_bpe.model",
+    "VOCAB_SIZE": 1024,
+    "ITERATIONS": 16,
+    "TRAIN_BATCH_TOKENS": 8192,
+    "VAL_BATCH_SIZE": 8192,
+    "VAL_LOSS_EVERY": 0,
+    "MAX_WALLCLOCK_SECONDS": 120,
+    "TRAIN_LOG_EVERY": 4,
+    "MLX_COMPILE": 0,
+    "CURRICULUM_ENABLED": 1,
+    "CURRICULUM_FEATURES_PATH": "curriculum_smoke_features.npz",
+    "CURRICULUM_PHASE_PLAN_PATH": "curriculum_phase_plan.example.json"
+  },
+  "runs": [
+    {
+      "slug": "curriculum-control",
+      "notes": "Small curriculum smoke run using prebuilt chunk metadata and the default five-phase plan.",
+      "env": {
+        "RUN_ID": "mlx-curriculum-smoke_control",
+        "NUM_LAYERS": 9,
+        "NUM_LAYER_TEMPLATES": 9,
+        "MODEL_DIM": 512,
+        "NUM_HEADS": 8,
+        "NUM_KV_HEADS": 4
+      }
+    }
+  ]
+}

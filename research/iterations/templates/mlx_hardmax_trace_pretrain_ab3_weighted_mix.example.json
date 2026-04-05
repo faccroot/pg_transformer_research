@@ -1,0 +1,86 @@
+{
+  "iteration_id": "iter_YYYYMMDD_HHMMSS_hardmax_trace_pretrain_ab3_weighted_mix",
+  "sweep_slug": "mlx-hardmax-trace-pretrain-ab3-weighted-mix",
+  "dispatch_mode": "queue",
+  "queue_parallelism": 2,
+  "wrapper_script": "/home/zaytor/transformer_research/parameter-golf/run_train_gpt_mlx_config.py",
+  "script": "/home/zaytor/transformer_research/parameter-golf/tools/train_hardmax_execution_trace.py",
+  "support_files": [
+    "/home/zaytor/transformer_research/parameter-golf/tools/train_hardmax_execution_trace.py",
+    "/home/zaytor/transformer_research/parameter-golf/execution_trace_dataset.py",
+    "/home/zaytor/transformer_research/parameter-golf/execution_trace_pretrain_dataset.py",
+    "/home/zaytor/transformer_research/parameter-golf/logic_register_mlx.py"
+  ],
+  "base_args": {
+    "generate-examples": 4096,
+    "seed": 23,
+    "task-family": "mixed",
+    "steps": 300,
+    "batch-size": 32,
+    "eval-every": 50,
+    "log-every": 25,
+    "model-dim": 96,
+    "state-dim": 32,
+    "num-states": 8,
+    "temperature": 1.0,
+    "usage-balance-weight": 0.01,
+    "diversity-weight": 0.01,
+    "confidence-weight": 0.05,
+    "write-weight": 1.0,
+    "read-weight": 1.0,
+    "read-count-weight": 0.75,
+    "write-count-weight": 0.75,
+    "step-weight": 0.5,
+    "branch-weight": 0.5,
+    "delta-weight": 0.5,
+    "output-weight": 0.35,
+    "out-dir": "logs"
+  },
+  "runs": [
+    {
+      "slug": "trace-pretrain-mixed-memops",
+      "notes": "Mixed-family memops baseline with the richer memory-operation targets enabled.",
+      "env": {
+        "RUN_ID": "mlx-hardmax-trace-pretrain-ab3-weighted-mix_trace-pretrain-mixed-memops"
+      },
+      "args": {
+        "run-id": "mlx-hardmax-trace-pretrain-ab3-weighted-mix_trace-pretrain-mixed-memops"
+      }
+    },
+    {
+      "slug": "trace-pretrain-mixed-nestedx2",
+      "notes": "Mixed-family pretrain with nested control flow upweighted 2x relative to other families.",
+      "env": {
+        "RUN_ID": "mlx-hardmax-trace-pretrain-ab3-weighted-mix_trace-pretrain-mixed-nestedx2"
+      },
+      "args": {
+        "run-id": "mlx-hardmax-trace-pretrain-ab3-weighted-mix_trace-pretrain-mixed-nestedx2",
+        "task-family-mixture": "straight:1,branch:1,loop:1,nested:2"
+      }
+    },
+    {
+      "slug": "trace-pretrain-mixed-nestedx4",
+      "notes": "Mixed-family pretrain with a stronger nested curriculum bias while retaining non-nested traces.",
+      "env": {
+        "RUN_ID": "mlx-hardmax-trace-pretrain-ab3-weighted-mix_trace-pretrain-mixed-nestedx4"
+      },
+      "args": {
+        "run-id": "mlx-hardmax-trace-pretrain-ab3-weighted-mix_trace-pretrain-mixed-nestedx4",
+        "task-family-mixture": "straight:1,branch:1,loop:1,nested:4"
+      }
+    },
+    {
+      "slug": "trace-pretrain-mixed-nestedx2-anticollapse",
+      "notes": "Nested-upweighted mixed curriculum with stronger anti-collapse pressure.",
+      "env": {
+        "RUN_ID": "mlx-hardmax-trace-pretrain-ab3-weighted-mix_trace-pretrain-mixed-nestedx2-anticollapse"
+      },
+      "args": {
+        "run-id": "mlx-hardmax-trace-pretrain-ab3-weighted-mix_trace-pretrain-mixed-nestedx2-anticollapse",
+        "task-family-mixture": "straight:1,branch:1,loop:1,nested:2",
+        "usage-balance-weight": 0.05,
+        "diversity-weight": 0.05
+      }
+    }
+  ]
+}

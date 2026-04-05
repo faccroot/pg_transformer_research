@@ -1,0 +1,66 @@
+{
+  "iteration_id": "iter_YYYYMMDD_HHMMSS_hardmax_trace_pretrain_export_memops",
+  "sweep_slug": "mlx-hardmax-trace-pretrain-export-memops",
+  "dispatch_mode": "queue",
+  "queue_parallelism": 2,
+  "wrapper_script": "/home/zaytor/transformer_research/parameter-golf/run_train_gpt_mlx_config.py",
+  "script": "/home/zaytor/transformer_research/parameter-golf/tools/train_hardmax_execution_trace.py",
+  "support_files": [
+    "/home/zaytor/transformer_research/parameter-golf/tools/train_hardmax_execution_trace.py",
+    "/home/zaytor/transformer_research/parameter-golf/execution_trace_dataset.py",
+    "/home/zaytor/transformer_research/parameter-golf/execution_trace_pretrain_dataset.py",
+    "/home/zaytor/transformer_research/parameter-golf/logic_register_mlx.py"
+  ],
+  "base_args": {
+    "generate-examples": 4096,
+    "seed": 23,
+    "task-family": "mixed",
+    "max-depth": 3,
+    "steps": 400,
+    "batch-size": 32,
+    "eval-every": 100,
+    "log-every": 50,
+    "model-dim": 96,
+    "state-dim": 32,
+    "temperature": 1.0,
+    "write-weight": 1.0,
+    "read-weight": 1.0,
+    "read-count-weight": 0.75,
+    "write-count-weight": 0.75,
+    "step-weight": 0.5,
+    "branch-weight": 0.5,
+    "delta-weight": 0.5,
+    "output-weight": 0.35,
+    "usage-balance-weight": 0.01,
+    "diversity-weight": 0.01,
+    "confidence-weight": 0.05,
+    "out-dir": "logs"
+  },
+  "runs": [
+    {
+      "slug": "trace-pretrain-export-mixed-memops",
+      "notes": "Export the current best mixed+memops trace-pretrained controller for LM transfer.",
+      "env": {
+        "RUN_ID": "mlx-hardmax-trace-pretrain-export-memops_trace-pretrain-export-mixed-memops"
+      },
+      "args": {
+        "run-id": "mlx-hardmax-trace-pretrain-export-memops_trace-pretrain-export-mixed-memops",
+        "num-states": 8
+      }
+    },
+    {
+      "slug": "trace-pretrain-export-mixed-memops-anticollapse",
+      "notes": "Export a mixed+memops controller with stronger anti-collapse pressure for transfer comparison.",
+      "env": {
+        "RUN_ID": "mlx-hardmax-trace-pretrain-export-memops_trace-pretrain-export-mixed-memops-anticollapse"
+      },
+      "args": {
+        "run-id": "mlx-hardmax-trace-pretrain-export-memops_trace-pretrain-export-mixed-memops-anticollapse",
+        "num-states": 8,
+        "usage-balance-weight": 0.05,
+        "diversity-weight": 0.05,
+        "confidence-weight": 0.05
+      }
+    }
+  ]
+}

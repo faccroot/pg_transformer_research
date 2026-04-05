@@ -1,0 +1,68 @@
+{
+  "iteration_id": "iter_YYYYMMDD_HHMMSS_hardmax_trace_pretrain_smoke",
+  "sweep_slug": "mlx-hardmax-trace-pretrain-smoke",
+  "dispatch_mode": "queue",
+  "queue_parallelism": 2,
+  "wrapper_script": "/home/zaytor/transformer_research/parameter-golf/run_train_gpt_mlx_config.py",
+  "script": "/home/zaytor/transformer_research/parameter-golf/tools/train_hardmax_execution_trace.py",
+  "support_files": [
+    "/home/zaytor/transformer_research/parameter-golf/tools/train_hardmax_execution_trace.py",
+    "/home/zaytor/transformer_research/parameter-golf/execution_trace_dataset.py",
+    "/home/zaytor/transformer_research/parameter-golf/execution_trace_pretrain_dataset.py",
+    "/home/zaytor/transformer_research/parameter-golf/logic_register_mlx.py"
+  ],
+  "base_args": {
+    "generate-examples": 2048,
+    "seed": 7,
+    "task-family": "mixed",
+    "steps": 200,
+    "batch-size": 32,
+    "eval-every": 50,
+    "log-every": 25,
+    "model-dim": 96,
+    "state-dim": 32,
+    "temperature": 1.0,
+    "usage-balance-weight": 0.01,
+    "diversity-weight": 0.01,
+    "confidence-weight": 0.05,
+    "out-dir": "logs"
+  },
+  "runs": [
+    {
+      "slug": "trace-pretrain-1state",
+      "notes": "Controller-only execution-trace pretrain with a degenerate 1-state controller baseline.",
+      "env": {
+        "RUN_ID": "mlx-hardmax-trace-pretrain-smoke_trace-pretrain-1state"
+      },
+      "args": {
+        "run-id": "mlx-hardmax-trace-pretrain-smoke_trace-pretrain-1state",
+        "num-states": 1
+      }
+    },
+    {
+      "slug": "trace-pretrain-8state",
+      "notes": "Controller-only execution-trace pretrain with the current 8-state hardmax controller.",
+      "env": {
+        "RUN_ID": "mlx-hardmax-trace-pretrain-smoke_trace-pretrain-8state"
+      },
+      "args": {
+        "run-id": "mlx-hardmax-trace-pretrain-smoke_trace-pretrain-8state",
+        "num-states": 8
+      }
+    },
+    {
+      "slug": "trace-pretrain-8state-anticollapse",
+      "notes": "Execution-trace pretrain with stronger controller anti-collapse pressure.",
+      "env": {
+        "RUN_ID": "mlx-hardmax-trace-pretrain-smoke_trace-pretrain-8state-anticollapse"
+      },
+      "args": {
+        "run-id": "mlx-hardmax-trace-pretrain-smoke_trace-pretrain-8state-anticollapse",
+        "num-states": 8,
+        "usage-balance-weight": 0.05,
+        "diversity-weight": 0.05,
+        "confidence-weight": 0.05
+      }
+    }
+  ]
+}

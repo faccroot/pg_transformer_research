@@ -1,0 +1,75 @@
+{
+  "notes": "Focused tuning sweep for the current best kernel-student recipe. Hold the successful unfrozen pure-distillation setup fixed and search training budget plus learning rate.",
+  "sweep_slug": "representation-learning-kernel-teacher-student-tuning",
+  "dispatch_mode": "queue",
+  "queue_parallelism": 1,
+  "queue_retry_attempts": 2,
+  "script": "tools/representation_learning/train_kernel_teacher_student.py",
+  "wrapper_script": "run_cli_json_config.py",
+  "support_files": [
+    "tools/representation_learning/schemas.py",
+    "tools/representation_learning/build_kernel_teacher_text_dataset.py",
+    "tools/representation_learning/train_kernel_teacher_student.py",
+    "train_gpt_mlx.py",
+    "logic_register_mlx.py",
+    "early_exit_aux.py",
+    "text_prosody_features.py",
+    "structural_branching.py",
+    "token_category_weighting.py",
+    "token_context_weighting.py",
+    "sequential_data_filter.py",
+    "replay_signal_runtime.py",
+    "snapshot_signal_runtime.py",
+    "teacher_signal_runtime.py",
+    "curriculum_runtime.py",
+    "curriculum.py",
+    "apollo_mlx.py",
+    "turbo_quant_mlx.py",
+    "ternary_quant_mlx.py",
+    "data/tokenizers/fineweb_1024_bpe.model"
+  ],
+  "base_args": {
+    "teacher-dataset": "~/transformer_research/parameter-golf/research/representation_learning/priors/qwen_phi_olmo_kernel_teacher_text_v1.npz",
+    "tokenizer-path": "~/transformer_research/parameter-golf/data/tokenizers/fineweb_1024_bpe.model",
+    "seed": 17,
+    "batch-size": 4,
+    "epochs": 8,
+    "learning-rate": 0.0003,
+    "max-seq-len": 256,
+    "val-fraction": 0.2,
+    "ce-weight": 0.0,
+    "distill-weight": 1.0,
+    "freeze-backbone": false,
+    "model-dim": 128,
+    "num-layers": 2,
+    "num-layer-templates": 2,
+    "num-heads": 8,
+    "num-kv-heads": 4,
+    "mlp-mult": 2
+  },
+  "runs": [
+    {
+      "slug": "e8-lr3e4",
+      "notes": "Best current recipe extended from 4 to 8 epochs.",
+      "args": {
+        "output-dir": "~/transformer_research/parameter-golf/research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_tuning_v1/e8_lr3e4"
+      }
+    },
+    {
+      "slug": "e8-lr1e4",
+      "notes": "Lower LR on the same 8-epoch pure-distill recipe.",
+      "args": {
+        "learning-rate": 0.0001,
+        "output-dir": "~/transformer_research/parameter-golf/research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_tuning_v1/e8_lr1e4"
+      }
+    },
+    {
+      "slug": "e8-lr1e3",
+      "notes": "Higher LR on the same 8-epoch pure-distill recipe.",
+      "args": {
+        "learning-rate": 0.001,
+        "output-dir": "~/transformer_research/parameter-golf/research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_tuning_v1/e8_lr1e3"
+      }
+    }
+  ]
+}

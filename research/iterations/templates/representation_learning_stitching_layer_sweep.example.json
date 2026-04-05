@@ -1,0 +1,50 @@
+{
+  "notes": "Queue-mode stitching layer sweep over a SharedLatentGeometry artifact. Uses one common chunk cohort and one set of forward passes across all requested shared layers.",
+  "sweep_slug": "representation-learning-stitching-layer-sweep",
+  "dispatch_mode": "queue",
+  "queue_parallelism": 1,
+  "queue_retry_attempts": 2,
+  "script": "tools/representation_learning/verify_model_stitching_layer_sweep.py",
+  "wrapper_script": "run_cli_json_config.py",
+  "support_files": [
+    "tools/representation_learning/model_adapter.py",
+    "tools/representation_learning/extract_model_representation.py",
+    "tools/representation_learning/schemas.py",
+    "tools/representation_learning/verify_model_stitching.py",
+    "tools/representation_learning/verify_model_stitching_cohort.py",
+    "tools/representation_learning/verify_model_stitching_layer_sweep.py",
+    "tools/representation_learning/compare_gcca_stitching.py"
+  ],
+  "base_args": {
+    "output_dir": "~/transformer_research/parameter-golf/research/representation_learning/reports/qwen_phi_olmo_stitching_layer_sweep_v1",
+    "shared_geometry": "~/transformer_research/parameter-golf/research/representation_learning/priors/qwen_phi_olmo_gcca_shared_geometry_v1.npz",
+    "calibration_jsonl": "~/transformer_research/parameter-golf/research/representation_learning/calibration/compare_v1_calibration.jsonl",
+    "layers": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12
+    ],
+    "max_examples": 128,
+    "train_fraction": 0.75,
+    "seed": 17,
+    "batch_size": 4,
+    "max_length": 1024,
+    "ridge_lambda": 0.0001,
+    "torch_dtype": "float16"
+  },
+  "runs": [
+    {
+      "slug": "qwen-phi-olmo-gcca-stitch-layer-sweep",
+      "notes": "Run full shared-layer stitching sweep and join each layer against GCCA diagnostics."
+    }
+  ]
+}

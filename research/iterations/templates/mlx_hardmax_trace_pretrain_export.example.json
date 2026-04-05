@@ -1,0 +1,58 @@
+{
+  "iteration_id": "iter_YYYYMMDD_HHMMSS_hardmax_trace_pretrain_export",
+  "sweep_slug": "mlx-hardmax-trace-pretrain-export",
+  "dispatch_mode": "queue",
+  "queue_parallelism": 2,
+  "wrapper_script": "/home/zaytor/transformer_research/parameter-golf/run_train_gpt_mlx_config.py",
+  "script": "/home/zaytor/transformer_research/parameter-golf/tools/train_hardmax_execution_trace.py",
+  "support_files": [
+    "/home/zaytor/transformer_research/parameter-golf/tools/train_hardmax_execution_trace.py",
+    "/home/zaytor/transformer_research/parameter-golf/execution_trace_dataset.py",
+    "/home/zaytor/transformer_research/parameter-golf/execution_trace_pretrain_dataset.py",
+    "/home/zaytor/transformer_research/parameter-golf/logic_register_mlx.py"
+  ],
+  "base_args": {
+    "generate-examples": 4096,
+    "seed": 7,
+    "task-family": "mixed",
+    "max-depth": 3,
+    "steps": 400,
+    "batch-size": 32,
+    "eval-every": 100,
+    "log-every": 50,
+    "model-dim": 96,
+    "state-dim": 32,
+    "temperature": 1.0,
+    "usage-balance-weight": 0.01,
+    "diversity-weight": 0.01,
+    "confidence-weight": 0.05,
+    "out-dir": "logs"
+  },
+  "runs": [
+    {
+      "slug": "trace-pretrain-export-8state",
+      "notes": "Produce a reusable 8-state execution-trace controller init artifact for LM transfer.",
+      "env": {
+        "RUN_ID": "mlx-hardmax-trace-pretrain-export_trace-pretrain-export-8state"
+      },
+      "args": {
+        "run-id": "mlx-hardmax-trace-pretrain-export_trace-pretrain-export-8state",
+        "num-states": 8
+      }
+    },
+    {
+      "slug": "trace-pretrain-export-8state-anticollapse",
+      "notes": "Produce a second reusable init artifact with stronger anti-collapse pressure for transfer comparisons.",
+      "env": {
+        "RUN_ID": "mlx-hardmax-trace-pretrain-export_trace-pretrain-export-8state-anticollapse"
+      },
+      "args": {
+        "run-id": "mlx-hardmax-trace-pretrain-export_trace-pretrain-export-8state-anticollapse",
+        "num-states": 8,
+        "usage-balance-weight": 0.05,
+        "diversity-weight": 0.05,
+        "confidence-weight": 0.05
+      }
+    }
+  ]
+}

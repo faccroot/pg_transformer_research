@@ -1,0 +1,87 @@
+{
+  "notes": "Modest capacity sweep around the current best kernel-student recipe. Hold the successful pure-distill objective and mean_last readout fixed while varying width and depth conservatively.",
+  "sweep_slug": "representation-learning-kernel-teacher-student-capacity",
+  "dispatch_mode": "queue",
+  "queue_parallelism": 1,
+  "queue_retry_attempts": 2,
+  "script": "tools/representation_learning/train_kernel_teacher_student.py",
+  "wrapper_script": "run_cli_json_config.py",
+  "support_files": [
+    "tools/representation_learning/schemas.py",
+    "tools/representation_learning/build_kernel_teacher_text_dataset.py",
+    "tools/representation_learning/train_kernel_teacher_student.py",
+    "train_gpt_mlx.py",
+    "logic_register_mlx.py",
+    "early_exit_aux.py",
+    "text_prosody_features.py",
+    "structural_branching.py",
+    "token_category_weighting.py",
+    "token_context_weighting.py",
+    "sequential_data_filter.py",
+    "replay_signal_runtime.py",
+    "snapshot_signal_runtime.py",
+    "teacher_signal_runtime.py",
+    "curriculum_runtime.py",
+    "curriculum.py",
+    "apollo_mlx.py",
+    "turbo_quant_mlx.py",
+    "ternary_quant_mlx.py",
+    "data/tokenizers/fineweb_1024_bpe.model"
+  ],
+  "base_args": {
+    "teacher-dataset": "~/transformer_research/parameter-golf/research/representation_learning/priors/qwen_phi_olmo_kernel_teacher_text_v1.npz",
+    "tokenizer-path": "~/transformer_research/parameter-golf/data/tokenizers/fineweb_1024_bpe.model",
+    "seed": 17,
+    "batch-size": 4,
+    "epochs": 8,
+    "learning-rate": 0.001,
+    "max-seq-len": 256,
+    "val-fraction": 0.2,
+    "ce-weight": 0.0,
+    "distill-weight": 1.0,
+    "freeze-backbone": false,
+    "model-dim": 128,
+    "num-layers": 2,
+    "num-layer-templates": 2,
+    "num-heads": 8,
+    "num-kv-heads": 4,
+    "mlp-mult": 2,
+    "readout-mode": "mean_last"
+  },
+  "runs": [
+    {
+      "slug": "d128_l2",
+      "notes": "Current best baseline.",
+      "args": {
+        "output-dir": "~/transformer_research/parameter-golf/research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_capacity_v1/d128_l2"
+      }
+    },
+    {
+      "slug": "d160_l2",
+      "notes": "Wider 2-layer variant.",
+      "args": {
+        "model-dim": 160,
+        "output-dir": "~/transformer_research/parameter-golf/research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_capacity_v1/d160_l2"
+      }
+    },
+    {
+      "slug": "d128_l3",
+      "notes": "Deeper 3-layer variant at the original width.",
+      "args": {
+        "num-layers": 3,
+        "num-layer-templates": 3,
+        "output-dir": "~/transformer_research/parameter-golf/research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_capacity_v1/d128_l3"
+      }
+    },
+    {
+      "slug": "d160_l3",
+      "notes": "Jointly wider and deeper variant, still modest.",
+      "args": {
+        "model-dim": 160,
+        "num-layers": 3,
+        "num-layer-templates": 3,
+        "output-dir": "~/transformer_research/parameter-golf/research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_capacity_v1/d160_l3"
+      }
+    }
+  ]
+}

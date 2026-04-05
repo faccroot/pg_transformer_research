@@ -1,0 +1,95 @@
+{
+  "iteration_id": "iter_YYYYMMDD_HHMMSS_curriculum_ab4",
+  "sweep_slug": "mlx-curriculum-ab4",
+  "dispatch_mode": "queue",
+  "queue_parallelism": 4,
+  "wrapper_script": "/home/zaytor/transformer_research/parameter-golf/run_train_gpt_mlx_config.py",
+  "script": "/home/zaytor/transformer_research/parameter-golf/train_gpt_mlx.py",
+  "support_files": [
+    "/home/zaytor/transformer_research/parameter-golf/train_gpt_mlx.py",
+    "/home/zaytor/transformer_research/parameter-golf/curriculum.py",
+    "/home/zaytor/transformer_research/parameter-golf/curriculum_runtime.py",
+    "/home/zaytor/transformer_research/parameter-golf/logic_register_mlx.py",
+    "/home/zaytor/transformer_research/parameter-golf/ternary_quant_mlx.py",
+    "/home/zaytor/transformer_research/parameter-golf/turbo_quant_mlx.py",
+    "/home/zaytor/transformer_research/parameter-golf/research/iterations/templates/curriculum_phase_plan.example.json",
+    "/home/zaytor/transformer_research/parameter-golf/research/iterations/generated/curriculum_smoke_features.npz"
+  ],
+  "base_env": {
+    "DATA_PATH": "~/transformer_research/parameter-golf/data/datasets/fineweb10B_sp1024",
+    "TOKENIZER_PATH": "~/transformer_research/parameter-golf/data/tokenizers/fineweb_1024_bpe.model",
+    "VOCAB_SIZE": 1024,
+    "ITERATIONS": 24,
+    "TRAIN_BATCH_TOKENS": 8192,
+    "VAL_BATCH_SIZE": 8192,
+    "VAL_LOSS_EVERY": 0,
+    "VAL_MAX_SEQS": 256,
+    "MAX_WALLCLOCK_SECONDS": 180,
+    "TRAIN_LOG_EVERY": 4,
+    "WARMUP_STEPS": 0,
+    "MLX_COMPILE": 0,
+    "NUM_LAYERS": 9,
+    "NUM_LAYER_TEMPLATES": 9,
+    "MODEL_DIM": 512,
+    "NUM_HEADS": 8,
+    "NUM_KV_HEADS": 4,
+    "QUANT_FORMAT": "turbo_block_v1",
+    "TURBO_QAT": 1,
+    "TURBO_QAT_START_FRAC": 0.5,
+    "TURBO_QAT_RAMP_FRAC": 0.25,
+    "TURBO_QAT_LAMBDA": 0.01,
+    "TURBO_QAT_MUON_MOMENTUM": 0.92,
+    "TURBO_QAT_MUON_MOMENTUM_WARMUP_START": 0.82,
+    "TURBO_BLOCK_SIZE": 64,
+    "TURBO_MSE_BITS": 5,
+    "TURBO_PROD_BITS": 6,
+    "EMA_ENABLED": 1,
+    "EMA_START_FRAC": 0.5,
+    "EMA_DECAY": 0.999,
+    "CURRICULUM_FEATURES_PATH": "curriculum_smoke_features.npz",
+    "CURRICULUM_PHASE_PLAN_PATH": "curriculum_phase_plan.example.json"
+  },
+  "runs": [
+    {
+      "slug": "baseline-sequential",
+      "notes": "Baseline trainer with sequential shard order and no curriculum runtime.",
+      "env": {
+        "RUN_ID": "mlx-curriculum-ab4_baseline-sequential",
+        "CURRICULUM_ENABLED": 0
+      }
+    },
+    {
+      "slug": "curriculum-order-only",
+      "notes": "Curriculum chunk ordering only. Phase QAT/EMA gating and focal weighting are disabled.",
+      "env": {
+        "RUN_ID": "mlx-curriculum-ab4_curriculum-order-only",
+        "CURRICULUM_ENABLED": 1,
+        "CURRICULUM_APPLY_QAT_PHASE_GATING": 0,
+        "CURRICULUM_APPLY_EMA_PHASE_GATING": 0,
+        "CURRICULUM_APPLY_FOCAL": 0
+      }
+    },
+    {
+      "slug": "curriculum-order-plus-gating",
+      "notes": "Curriculum ordering plus phase-gated QAT and EMA. Focal weighting remains off.",
+      "env": {
+        "RUN_ID": "mlx-curriculum-ab4_curriculum-order-plus-gating",
+        "CURRICULUM_ENABLED": 1,
+        "CURRICULUM_APPLY_QAT_PHASE_GATING": 1,
+        "CURRICULUM_APPLY_EMA_PHASE_GATING": 1,
+        "CURRICULUM_APPLY_FOCAL": 0
+      }
+    },
+    {
+      "slug": "curriculum-order-gating-focal",
+      "notes": "Curriculum ordering plus phase gating plus hard-phase focal CE weighting.",
+      "env": {
+        "RUN_ID": "mlx-curriculum-ab4_curriculum-order-gating-focal",
+        "CURRICULUM_ENABLED": 1,
+        "CURRICULUM_APPLY_QAT_PHASE_GATING": 1,
+        "CURRICULUM_APPLY_EMA_PHASE_GATING": 1,
+        "CURRICULUM_APPLY_FOCAL": 1
+      }
+    }
+  ]
+}

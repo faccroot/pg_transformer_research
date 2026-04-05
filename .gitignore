@@ -1,11 +1,55 @@
-data/tokenizers
+# Public-fork hygiene: keep source, tests, and narrative notes; ignore local
+# environments, datasets, generated artifacts, and private scratch space.
+
+# Python caches and local tooling
 __pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 .DS_Store
+
+# Local environments and logs
+.venv
+.venv/
+.venv-*/
+.logs/
+logs/
+*.log
+*.pid
+$tmpdir/
+.tmp*/
+
+# Upstream / local scratch
 modded-nanogpt/
 modded-nanogpt
-data/datasets
+
+# Local model artifacts
+final_model.pt
+final_model.int8.ptz
+
+# Datasets and tokenizer binaries
+data/datasets/
+data/tokenizers/
 data/manifest.json
 data/docs_selected.jsonl
-.mypy_cache/
-.venv
-logs/
+data/docs_selected.source_manifest.json
+
+# Public repo exclusions: generated runs, external mirrors, theory dumps,
+# and large representation-learning artifacts stay local.
+theory/
+research/competition_prs/
+research/iterations/generated/
+research/iterations/archive/
+research/iterations/iteration_index.jsonl
+research/iterations/run_index.jsonl
+research/experiment_ledger.csv
+research/project_wide/mac_mini_cluster_access.md
+research/representation_learning/calibration/
+research/representation_learning/generated/
+research/representation_learning/priors/
+research/representation_learning/reports/
+research/representation_learning/runs/

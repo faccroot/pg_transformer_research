@@ -1,0 +1,7 @@
+mlx
+numpy
+sentencepiece
+huggingface-hub
+datasets
+tqdm
+morfessor

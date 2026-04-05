@@ -1,0 +1,67 @@
+{
+  "notes": "Step-0 real-target init benchmark focused on adapter-mode ablation. Uses the same artifact bundle across runs so the only intended variable is how canonical directions are mapped into target weights.",
+  "sweep_slug": "mlx-representation-init-adapter-sweep",
+  "dispatch_mode": "queue",
+  "queue_parallelism": 1,
+  "queue_retry_attempts": 8,
+  "script": "tools/representation_learning/eval_mlx_representation_init.py",
+  "wrapper_script": "run_cli_json_config.py",
+  "support_files": [
+    "train_gpt_mlx.py",
+    "logic_register_mlx.py",
+    "turbo_quant_mlx.py",
+    "ternary_quant_mlx.py",
+    "tools/representation_learning/runtime_mlx.py",
+    "tools/representation_learning/schemas.py"
+  ],
+  "base_args": {
+    "data_path": "/ABSOLUTE/PATH/ON/MINI/fineweb10B_sp1024",
+    "tokenizer_path": "~/transformer_research/parameter-golf/data/tokenizers/fineweb_1024_bpe.model",
+    "val_batch_size": 131072,
+    "val_max_seqs": 256,
+    "train_seq_len": 1024,
+    "eval_seq_len": 1024,
+    "vocab_size": 1024,
+    "num_layers": 9,
+    "num_layer_templates": 9,
+    "model_dim": 512,
+    "num_heads": 8,
+    "num_kv_heads": 4,
+    "mlp_mult": 3,
+    "seed": 1337,
+    "init_strength": 0.5,
+    "init_targets": "qk",
+    "artifact": [
+      "qwen=~/transformer_research/parameter-golf/research/representation_learning/runs/qwen3_4b_compare_v3/model_representation.npz",
+      "merge_qwen_olmo=~/transformer_research/parameter-golf/research/representation_learning/priors/qwen_olmo_activation_merge_v1.npz",
+      "hybrid_qwen_olmo=~/transformer_research/parameter-golf/research/representation_learning/priors/qwen_olmo_hybrid_merge_v1.npz",
+      "moonshot_qwen_olmo=~/transformer_research/parameter-golf/research/representation_learning/priors/qwen_olmo_moonshot_merge_v1.npz"
+    ]
+  },
+  "runs": [
+    {
+      "slug": "random-adapter",
+      "notes": "Random projection baseline adapter.",
+      "args": {
+        "output": "~/transformer_research/parameter-golf/research/representation_learning/reports/actual_target_init_eval_random_v1.json",
+        "adapter_mode": "random"
+      }
+    },
+    {
+      "slug": "svd-carrier",
+      "notes": "Carrier-basis adapter using target SVD directions.",
+      "args": {
+        "output": "~/transformer_research/parameter-golf/research/representation_learning/reports/actual_target_init_eval_svd_carrier_v1.json",
+        "adapter_mode": "svd_carrier"
+      }
+    },
+    {
+      "slug": "svd-carrier-matched",
+      "notes": "Carrier-basis adapter with Frobenius energy matching to the target matrix.",
+      "args": {
+        "output": "~/transformer_research/parameter-golf/research/representation_learning/reports/actual_target_init_eval_svd_carrier_matched_v1.json",
+        "adapter_mode": "svd_carrier_matched"
+      }
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "notes": "Queue-mode step-0 init benchmark for representation-learning priors on the real MLX GPT target. Set DATA_PATH to a directory that already exists on the remote Minis. File-valued args such as TOKENIZER_PATH and artifact paths will be staged automatically.",
+  "sweep_slug": "mlx-representation-init-eval",
+  "dispatch_mode": "queue",
+  "queue_parallelism": 1,
+  "queue_retry_attempts": 8,
+  "script": "tools/representation_learning/eval_mlx_representation_init.py",
+  "wrapper_script": "run_cli_json_config.py",
+  "support_files": [
+    "train_gpt_mlx.py",
+    "logic_register_mlx.py",
+    "turbo_quant_mlx.py",
+    "ternary_quant_mlx.py",
+    "tools/representation_learning/runtime_mlx.py",
+    "tools/representation_learning/schemas.py"
+  ],
+  "base_args": {
+    "output": "~/transformer_research/parameter-golf/research/representation_learning/reports/actual_target_init_eval_v1.json",
+    "data_path": "/ABSOLUTE/PATH/ON/MINI/fineweb10B_sp1024",
+    "tokenizer_path": "~/transformer_research/parameter-golf/data/tokenizers/fineweb_1024_bpe.model",
+    "val_batch_size": 131072,
+    "val_max_seqs": 256,
+    "train_seq_len": 1024,
+    "eval_seq_len": 1024,
+    "vocab_size": 1024,
+    "num_layers": 9,
+    "num_layer_templates": 9,
+    "model_dim": 512,
+    "num_heads": 8,
+    "num_kv_heads": 4,
+    "mlp_mult": 3,
+    "seed": 1337,
+    "init_strength": 0.5,
+    "init_targets": "qk",
+    "adapter_mode": "svd_carrier"
+  },
+  "runs": [
+    {
+      "slug": "step0-priors",
+      "notes": "Baseline plus single-source and merged priors on the real target architecture.",
+      "args": {
+        "artifact": [
+          "qwen=~/transformer_research/parameter-golf/research/representation_learning/runs/qwen3_4b_compare_v3/model_representation.npz",
+          "olmo=~/transformer_research/parameter-golf/research/representation_learning/runs/olmo2_1b_compare_v3/model_representation.npz",
+          "phi=~/transformer_research/parameter-golf/research/representation_learning/runs/phi4_mini_compare_v2/model_representation.npz",
+          "merge_qwen_olmo=~/transformer_research/parameter-golf/research/representation_learning/priors/qwen_olmo_activation_merge_v1.npz",
+          "merge_qwen_phi_olmo=~/transformer_research/parameter-golf/research/representation_learning/priors/qwen_phi_olmo_activation_merge_v1.npz",
+          "hybrid_qwen_olmo=~/transformer_research/parameter-golf/research/representation_learning/priors/qwen_olmo_hybrid_merge_v1.npz",
+          "hybrid_qwen_phi_olmo=~/transformer_research/parameter-golf/research/representation_learning/priors/qwen_phi_olmo_hybrid_merge_v2.npz",
+          "hardmax_qwen_olmo=~/transformer_research/parameter-golf/research/representation_learning/priors/qwen_olmo_hardmax_merge_v1.npz",
+          "hardmax_qwen_phi_olmo=~/transformer_research/parameter-golf/research/representation_learning/priors/qwen_phi_olmo_hardmax_merge_v1.npz",
+          "moonshot_qwen_olmo=~/transformer_research/parameter-golf/research/representation_learning/priors/qwen_olmo_moonshot_merge_v1.npz",
+          "moonshot_qwen_phi_olmo=~/transformer_research/parameter-golf/research/representation_learning/priors/qwen_phi_olmo_moonshot_merge_v1.npz"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "iteration_id": "iter_YYYYMMDD_HHMMSS_example",
+  "sweep_slug": "a1-shared-template-smoke",
+  "script": "/home/zaytor/transformer_research/parameter-golf/train_gpt_mlx.py",
+  "base_env": {
+    "DATA_PATH": "~/transformer_research/parameter-golf/data/datasets/fineweb10B_sp1024",
+    "TOKENIZER_PATH": "~/transformer_research/parameter-golf/data/tokenizers/fineweb_1024_bpe.model",
+    "VOCAB_SIZE": 1024,
+    "ITERATIONS": 200,
+    "TRAIN_BATCH_TOKENS": 8192,
+    "VAL_BATCH_SIZE": 8192,
+    "VAL_LOSS_EVERY": 0
+  },
+  "runs": [
+    {
+      "slug": "control-9x512",
+      "notes": "Baseline control on one Mini.",
+      "env": {
+        "NUM_LAYERS": 9,
+        "NUM_LAYER_TEMPLATES": 9,
+        "MODEL_DIM": 512,
+        "NUM_HEADS": 8,
+        "NUM_KV_HEADS": 4
+      }
+    },
+    {
+      "slug": "shared1-9step",
+      "notes": "Single-template recurrent ablation with quant diagnostics enabled.",
+      "env": {
+        "NUM_LAYERS": 9,
+        "NUM_LAYER_TEMPLATES": 1,
+        "MODEL_DIM": 512,
+        "NUM_HEADS": 8,
+        "NUM_KV_HEADS": 4,
+        "QUANT_EVAL_EVERY": 100,
+        "QUANT_EVAL_MAX_SEQS": 128
+      }
+    }
+  ]
+}

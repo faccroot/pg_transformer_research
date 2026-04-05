@@ -1,0 +1,68 @@
+{
+  "notes": "Queue-mode external LM evaluation for the strongest current kernel-student checkpoints on a common JSONL text surface.",
+  "sweep_slug": "representation-learning-kernel-teacher-student-external-eval-top4",
+  "dispatch_mode": "queue",
+  "queue_parallelism": 1,
+  "queue_retry_attempts": 2,
+  "script": "tools/representation_learning/evaluate_kernel_teacher_student_checkpoint.py",
+  "wrapper_script": "run_cli_json_config.py",
+  "support_files": [
+    "tools/representation_learning/evaluate_kernel_teacher_student_checkpoint.py",
+    "tools/representation_learning/train_kernel_teacher_student.py",
+    "tools/representation_learning/schemas.py",
+    "train_gpt_mlx.py",
+    "logic_register_mlx.py",
+    "early_exit_aux.py",
+    "text_prosody_features.py",
+    "structural_branching.py",
+    "token_category_weighting.py",
+    "token_context_weighting.py",
+    "sequential_data_filter.py",
+    "replay_signal_runtime.py",
+    "snapshot_signal_runtime.py",
+    "teacher_signal_runtime.py",
+    "curriculum_runtime.py",
+    "curriculum.py",
+    "apollo_mlx.py",
+    "turbo_quant_mlx.py",
+    "ternary_quant_mlx.py",
+    "data/tokenizers/fineweb_1024_bpe.model"
+  ],
+  "base_args": {
+    "eval-jsonl": "~/transformer_research/parameter-golf/research/representation_learning/calibration/compare_v1_calibration.jsonl",
+    "tokenizer-path": "~/transformer_research/parameter-golf/data/tokenizers/fineweb_1024_bpe.model",
+    "text-key": "text",
+    "batch-size": 4,
+    "max-examples": 64
+  },
+  "runs": [
+    {
+      "slug": "olmo_ce005",
+      "args": {
+        "summary-path": "~/transformer_research/parameter-golf/research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_olmo_ce_sweep_v1/ce005/summary.json",
+        "output": "~/transformer_research/parameter-golf/research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_external_eval_top4_v1/olmo_ce005.json"
+      }
+    },
+    {
+      "slug": "olmo_ce010",
+      "args": {
+        "summary-path": "~/transformer_research/parameter-golf/research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_olmo_ce_sweep_v1/ce010/summary.json",
+        "output": "~/transformer_research/parameter-golf/research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_external_eval_top4_v1/olmo_ce010.json"
+      }
+    },
+    {
+      "slug": "olmo_ce025",
+      "args": {
+        "summary-path": "~/transformer_research/parameter-golf/research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_olmo_ce_sweep_v1/ce025/summary.json",
+        "output": "~/transformer_research/parameter-golf/research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_external_eval_top4_v1/olmo_ce025.json"
+      }
+    },
+    {
+      "slug": "ecology_ce0",
+      "args": {
+        "summary-path": "~/transformer_research/parameter-golf/research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_teacher_compare_top3_v1/ecology_teacher/summary.json",
+        "output": "~/transformer_research/parameter-golf/research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_external_eval_top4_v1/ecology_ce0.json"
+      }
+    }
+  ]
+}

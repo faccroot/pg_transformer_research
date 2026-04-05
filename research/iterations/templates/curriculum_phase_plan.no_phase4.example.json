@@ -1,0 +1,62 @@
+[
+  {
+    "name": "structural-foundation",
+    "start_frac": 0.0,
+    "end_frac": 0.2,
+    "focus": "diverse",
+    "enable_jepa": false,
+    "enable_logic_sidecar": false,
+    "enable_qat": false,
+    "enable_ema": false,
+    "focal_loss_weight": 0.0,
+    "skip_mastered": true
+  },
+  {
+    "name": "logic-polarity",
+    "start_frac": 0.2,
+    "end_frac": 0.4,
+    "focus": "operator_dense",
+    "enable_jepa": true,
+    "enable_logic_sidecar": true,
+    "enable_qat": false,
+    "enable_ema": false,
+    "focal_loss_weight": 0.0,
+    "skip_mastered": true
+  },
+  {
+    "name": "hard-content",
+    "start_frac": 0.4,
+    "end_frac": 0.6,
+    "focus": "hard",
+    "enable_jepa": true,
+    "enable_logic_sidecar": true,
+    "enable_qat": false,
+    "enable_ema": false,
+    "focal_loss_weight": 0.25,
+    "skip_mastered": true
+  },
+  {
+    "name": "qat-geometry",
+    "start_frac": 0.6,
+    "end_frac": 0.8,
+    "focus": "sequential",
+    "enable_jepa": false,
+    "enable_logic_sidecar": false,
+    "enable_qat": true,
+    "enable_ema": false,
+    "focal_loss_weight": 0.0,
+    "skip_mastered": true
+  },
+  {
+    "name": "consolidation",
+    "start_frac": 0.8,
+    "end_frac": 1.0,
+    "focus": "mixed",
+    "enable_jepa": false,
+    "enable_logic_sidecar": false,
+    "enable_qat": true,
+    "enable_ema": true,
+    "focal_loss_weight": 0.0,
+    "skip_mastered": true
+  }
+]

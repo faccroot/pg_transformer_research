@@ -1,0 +1,92 @@
+{
+  "notes": "Queue-mode CE-weight sweep for the strongest current teacher branch. Keep the best student recipe fixed and test whether adding a small LM CE term improves validation CE/BPB while retaining strong distillation fit.",
+  "sweep_slug": "representation-learning-kernel-teacher-student-olmo-ce-sweep",
+  "dispatch_mode": "queue",
+  "queue_parallelism": 1,
+  "queue_retry_attempts": 2,
+  "script": "tools/representation_learning/train_kernel_teacher_student.py",
+  "wrapper_script": "run_cli_json_config.py",
+  "support_files": [
+    "tools/representation_learning/schemas.py",
+    "tools/representation_learning/train_kernel_teacher_student.py",
+    "train_gpt_mlx.py",
+    "logic_register_mlx.py",
+    "early_exit_aux.py",
+    "text_prosody_features.py",
+    "structural_branching.py",
+    "token_category_weighting.py",
+    "token_context_weighting.py",
+    "sequential_data_filter.py",
+    "replay_signal_runtime.py",
+    "snapshot_signal_runtime.py",
+    "teacher_signal_runtime.py",
+    "curriculum_runtime.py",
+    "curriculum.py",
+    "apollo_mlx.py",
+    "turbo_quant_mlx.py",
+    "ternary_quant_mlx.py",
+    "data/tokenizers/fineweb_1024_bpe.model"
+  ],
+  "base_args": {
+    "teacher-dataset": "~/transformer_research/parameter-golf/research/representation_learning/priors/qwen_phi_olmo_kernel_teacher_olmo_text_v1.npz",
+    "tokenizer-path": "~/transformer_research/parameter-golf/data/tokenizers/fineweb_1024_bpe.model",
+    "seed": 17,
+    "batch-size": 4,
+    "epochs": 8,
+    "learning-rate": 0.001,
+    "max-seq-len": 256,
+    "val-fraction": 0.2,
+    "distill-weight": 1.0,
+    "freeze-backbone": false,
+    "model-dim": 128,
+    "num-layers": 2,
+    "num-layer-templates": 2,
+    "num-heads": 8,
+    "num-kv-heads": 4,
+    "mlp-mult": 2,
+    "readout-mode": "mean_last",
+    "projection-mode": "direct"
+  },
+  "runs": [
+    {
+      "slug": "ce0",
+      "notes": "Pure distillation baseline on the strongest teacher.",
+      "args": {
+        "ce-weight": 0.0,
+        "output-dir": "~/transformer_research/parameter-golf/research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_olmo_ce_sweep_v1/ce0"
+      }
+    },
+    {
+      "slug": "ce002",
+      "notes": "Very light LM supervision.",
+      "args": {
+        "ce-weight": 0.02,
+        "output-dir": "~/transformer_research/parameter-golf/research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_olmo_ce_sweep_v1/ce002"
+      }
+    },
+    {
+      "slug": "ce005",
+      "notes": "Light LM supervision.",
+      "args": {
+        "ce-weight": 0.05,
+        "output-dir": "~/transformer_research/parameter-golf/research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_olmo_ce_sweep_v1/ce005"
+      }
+    },
+    {
+      "slug": "ce010",
+      "notes": "Moderate LM supervision.",
+      "args": {
+        "ce-weight": 0.1,
+        "output-dir": "~/transformer_research/parameter-golf/research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_olmo_ce_sweep_v1/ce010"
+      }
+    },
+    {
+      "slug": "ce025",
+      "notes": "Heavier LM supervision to test whether CE rescues product utility.",
+      "args": {
+        "ce-weight": 0.25,
+        "output-dir": "~/transformer_research/parameter-golf/research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_olmo_ce_sweep_v1/ce025"
+      }
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+theory/ export-ignore
+research/competition_prs/ export-ignore
+research/iterations/generated/ export-ignore
+research/iterations/archive/ export-ignore
+research/iterations/iteration_index.jsonl export-ignore
+research/iterations/run_index.jsonl export-ignore
+research/experiment_ledger.csv export-ignore
+research/project_wide/mac_mini_cluster_access.md export-ignore
+research/representation_learning/calibration/ export-ignore
+research/representation_learning/generated/ export-ignore
+research/representation_learning/priors/ export-ignore
+research/representation_learning/reports/ export-ignore
+research/representation_learning/runs/ export-ignore
+data/datasets/ export-ignore
+data/tokenizers/ export-ignore

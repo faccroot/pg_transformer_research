@@ -1,0 +1,92 @@
+{
+  "notes": "Direct one-hour merger benchmark: baseline vs best single-source prior vs flat activation merge vs hybrid cascade-guided merge vs moonshot stratified merge. Uses the calibrated svd_carrier runtime adapter baseline. If init-eval shows svd_carrier_matched is better, clone this template and swap REP_LEARN_ADAPTER_MODE before dispatch.",
+  "sweep_slug": "mlx-representation-merger-1h",
+  "dispatch_mode": "queue",
+  "queue_parallelism": 2,
+  "queue_retry_attempts": 4,
+  "script": "train_gpt_mlx.py",
+  "wrapper_script": "run_train_gpt_mlx_config.py",
+  "support_files": [
+    "train_gpt_mlx_representation.py",
+    "token_category_weighting.py",
+    "token_context_weighting.py",
+    "logic_register_mlx.py",
+    "turbo_quant_mlx.py",
+    "ternary_quant_mlx.py",
+    "tools/representation_learning/runtime_mlx.py",
+    "tools/representation_learning/schemas.py"
+  ],
+  "base_env": {
+    "DATA_PATH": "./data/datasets/fineweb10B_sp1024",
+    "TOKENIZER_PATH": "./data/tokenizers/fineweb_1024_bpe.model",
+    "VOCAB_SIZE": "1024",
+    "NUM_LAYERS": "9",
+    "NUM_LAYER_TEMPLATES": "9",
+    "MODEL_DIM": "512",
+    "NUM_HEADS": "8",
+    "NUM_KV_HEADS": "4",
+    "MLP_MULT": "3",
+    "ITERATIONS": "1000000",
+    "MAX_WALLCLOCK_SECONDS": "3600",
+    "TRAIN_SEQ_LEN": "512",
+    "TRAIN_BATCH_TOKENS": "8192",
+    "VAL_BATCH_SIZE": "8192",
+    "GRAD_ACCUM_STEPS": "8",
+    "MLX_MAX_MICROBATCH_TOKENS": "4096",
+    "TRAIN_LOG_EVERY": "100",
+    "VAL_LOSS_EVERY": "0",
+    "QUANT_EVAL_EVERY": "0",
+    "WARMUP_STEPS": "0",
+    "MLX_COMPILE": "0",
+    "REP_LEARN_QK_INIT": "1",
+    "REP_LEARN_INIT_STRENGTH": "0.5",
+    "REP_LEARN_ADAPTER_MODE": "svd_carrier"
+  },
+  "runs": [
+    {
+      "slug": "baseline",
+      "notes": "Plain GPT baseline control.",
+      "env": {
+        "RUN_ID": "rep_merge_baseline",
+        "REP_LEARN_QK_INIT": "0",
+        "REP_LEARN_PRIORS_PATH": null
+      }
+    },
+    {
+      "slug": "single-qwen",
+      "script": "train_gpt_mlx_representation.py",
+      "notes": "Best current single-source structural prior baseline.",
+      "env": {
+        "RUN_ID": "rep_merge_qwen",
+        "REP_LEARN_PRIORS_PATH": "~/transformer_research/parameter-golf/research/representation_learning/runs/qwen3_4b_compare_v3/model_representation.npz"
+      }
+    },
+    {
+      "slug": "flat-merge-qwen-olmo",
+      "script": "train_gpt_mlx_representation.py",
+      "notes": "Current best flat activation merge baseline.",
+      "env": {
+        "RUN_ID": "rep_merge_flat_qwen_olmo",
+        "REP_LEARN_PRIORS_PATH": "~/transformer_research/parameter-golf/research/representation_learning/priors/qwen_olmo_activation_merge_v1.npz"
+      }
+    },
+    {
+      "slug": "hybrid-merge-qwen-olmo",
+      "script": "train_gpt_mlx_representation.py",
+      "notes": "Sequence-aware hybrid merge; current best local two-model sequence branch.",
+      "env": {
+        "RUN_ID": "rep_merge_hybrid_qwen_olmo",
+        "REP_LEARN_PRIORS_PATH": "~/transformer_research/parameter-golf/research/representation_learning/priors/qwen_olmo_hybrid_merge_v1.npz"
+      }
+    },
+    {
+      "slug": "moonshot-merge-qwen-olmo",
+      "script": "train_gpt_mlx_representation.py",
+      "notes": "Most ambitious current two-model merge: explicit shared-plus-unique budgeting with novelty-weighted unique quotas.",
+      "env": {
+        "RUN_ID": "rep_merge_moonshot_qwen_olmo",
+        "REP_LEARN_PRIORS_PATH": "~/transformer_research/parameter-golf/research/representation_learning/priors/qwen_olmo_moonshot_merge_v1.npz"
+      }
+    }
+  ]
+}

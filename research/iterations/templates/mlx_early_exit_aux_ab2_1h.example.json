@@ -1,0 +1,93 @@
+{
+  "iteration_id": "iter_YYYYMMDD_HHMMSS_early_exit_aux_ab2_1h",
+  "sweep_slug": "mlx-early-exit-aux-ab2-1h",
+  "dispatch_mode": "queue",
+  "queue_parallelism": 2,
+  "wrapper_script": "/home/zaytor/transformer_research/parameter-golf/run_train_gpt_mlx_config.py",
+  "script": "/home/zaytor/transformer_research/parameter-golf/train_gpt_mlx.py",
+  "support_files": [
+    "/home/zaytor/transformer_research/parameter-golf/train_gpt_mlx.py",
+    "/home/zaytor/transformer_research/parameter-golf/train_gpt_mlx_earlyexit.py",
+    "/home/zaytor/transformer_research/parameter-golf/early_exit_aux.py",
+    "/home/zaytor/transformer_research/parameter-golf/structural_branching.py",
+    "/home/zaytor/transformer_research/parameter-golf/sequential_data_filter.py",
+    "/home/zaytor/transformer_research/parameter-golf/token_category_weighting.py",
+    "/home/zaytor/transformer_research/parameter-golf/token_context_weighting.py",
+    "/home/zaytor/transformer_research/parameter-golf/logic_register_mlx.py",
+    "/home/zaytor/transformer_research/parameter-golf/apollo_mlx.py",
+    "/home/zaytor/transformer_research/parameter-golf/ternary_quant_mlx.py",
+    "/home/zaytor/transformer_research/parameter-golf/turbo_quant_mlx.py"
+  ],
+  "base_env": {
+    "DATA_PATH": "~/transformer_research/parameter-golf/data/datasets/fineweb10B_sp1024",
+    "TOKENIZER_PATH": "~/transformer_research/parameter-golf/data/tokenizers/fineweb_1024_bpe.model",
+    "VOCAB_SIZE": 1024,
+    "TRAIN_BATCH_TOKENS": 8192,
+    "TRAIN_LOG_EVERY": 100,
+    "VAL_BATCH_SIZE": 524288,
+    "VAL_LOSS_EVERY": 0,
+    "VAL_MAX_SEQS": 0,
+    "QUANT_EVAL_EVERY": 0,
+    "QUANT_EVAL_MAX_SEQS": 0,
+    "ITERATIONS": 60000,
+    "MAX_WALLCLOCK_SECONDS": 3600,
+    "WARMUP_STEPS": 0,
+    "WARMDOWN_FRACTION": 0.18,
+    "MLX_COMPILE": 0,
+    "TIE_EMBEDDINGS": 0,
+    "MLP_LEAKY_SLOPE": 0.5,
+    "QUANT_FORMAT": "turbo_block_v1",
+    "TURBO_BLOCK_SIZE": 256,
+    "TURBO_EMBED_EXPORT": 1,
+    "TURBO_MSE_BITS": 3,
+    "TURBO_PROD_BITS": 4,
+    "TURBO_MSE_NAME_PATTERNS": "attn.c_q.weight,attn.c_v.weight,attn.proj.weight,mlp.fc.weight,mlp.proj.weight,lm_head.weight",
+    "TURBO_PROD_NAME_PATTERNS": "attn.c_k.weight",
+    "TURBO_QAT": 1,
+    "TURBO_QAT_LAMBDA": 0.01,
+    "TURBO_QAT_MUON_MOMENTUM": 0.92,
+    "TURBO_QAT_MUON_MOMENTUM_WARMUP_START": 0.82,
+    "TURBO_QAT_START_FRAC": 0.5,
+    "TURBO_QAT_RAMP_FRAC": 0.25,
+    "TURBO_ROT_SEED": 17,
+    "TURBO_QJL_SEED": 29,
+    "EMA_ENABLED": 0,
+    "EMA_DECAY": 0.999,
+    "EMA_START_FRAC": 0.5,
+    "EMA_RESET_ON_PHASE_TRANSITION": 0,
+    "EMA_RESET_ON_QAT_FULL": 0,
+    "EMA_PHASE_RESET_MIN_PROGRESS": 0.75,
+    "EMA_PHASE_RESET_COOLDOWN_STEPS": 500,
+    "EMA_PHASE_RESET_REQUIRES_QAT_FULL": 1,
+    "PHASE_TRANSITION_LOG": 1,
+    "MODEL_DIM": 512,
+    "NUM_HEADS": 8,
+    "NUM_KV_HEADS": 4,
+    "NUM_LAYERS": 9,
+    "NUM_LAYER_TEMPLATES": 9,
+    "MLP_MULT": 2,
+    "OUT_DIR": "logs"
+  },
+  "runs": [
+    {
+      "slug": "combined-control-1h",
+      "script": "/home/zaytor/transformer_research/parameter-golf/train_gpt_mlx.py",
+      "notes": "Current-size combined control baseline for early-exit multi-horizon auxiliary A/B.",
+      "env": {
+        "RUN_ID": "mlx-early-exit-aux-ab2-1h_combined-control-1h"
+      }
+    },
+    {
+      "slug": "combined-control-1h_early-exit-aux",
+      "script": "/home/zaytor/transformer_research/parameter-golf/train_gpt_mlx_earlyexit.py",
+      "notes": "Same recipe with a mid-stack multi-horizon early-exit auxiliary head stripped from export.",
+      "env": {
+        "RUN_ID": "mlx-early-exit-aux-ab2-1h_combined-control-1h_early-exit-aux",
+        "EARLY_EXIT_LAYER_INDEX": 3,
+        "EARLY_EXIT_HORIZONS": "1,2,3",
+        "EARLY_EXIT_AUX_WEIGHT": 0.1,
+        "EARLY_EXIT_HEAD_INIT_STD": 0.005
+      }
+    }
+  ]
+}

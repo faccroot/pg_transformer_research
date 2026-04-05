@@ -1,0 +1,23 @@
+[
+  "mistralai/Mistral-7B-v0.3",
+  "~/transformer_research/parameter-golf/research/representation_learning/runs/qwen3_4b_cpu_smoke/calibration.jsonl",
+  "~/transformer_research/parameter-golf/research/representation_learning/runs/mistral7b_compare_v1/model_representation.npz",
+  "--top-k",
+  "16",
+  "--batch-size",
+  "1",
+  "--max-examples",
+  "128",
+  "--max-length",
+  "256",
+  "--layers",
+  "1,4,7,10,13,16,19,22,25,28,31,32",
+  "--device",
+  "auto",
+  "--torch-dtype",
+  "float16",
+  "--concept-probes",
+  "default",
+  "--probe-batch-size",
+  "4"
+]

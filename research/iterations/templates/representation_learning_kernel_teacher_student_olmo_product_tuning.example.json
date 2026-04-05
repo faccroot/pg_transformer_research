@@ -1,0 +1,104 @@
+{
+  "notes": "Queue-mode product tuning around the best current OLMo-teacher student branch. Focus on the external-eval winner region rather than broader teacher exploration.",
+  "sweep_slug": "representation-learning-kernel-teacher-student-olmo-product-tuning",
+  "dispatch_mode": "queue",
+  "queue_parallelism": 1,
+  "queue_retry_attempts": 2,
+  "script": "tools/representation_learning/train_kernel_teacher_student.py",
+  "wrapper_script": "run_cli_json_config.py",
+  "support_files": [
+    "tools/representation_learning/schemas.py",
+    "tools/representation_learning/train_kernel_teacher_student.py",
+    "train_gpt_mlx.py",
+    "logic_register_mlx.py",
+    "early_exit_aux.py",
+    "text_prosody_features.py",
+    "structural_branching.py",
+    "token_category_weighting.py",
+    "token_context_weighting.py",
+    "sequential_data_filter.py",
+    "replay_signal_runtime.py",
+    "snapshot_signal_runtime.py",
+    "teacher_signal_runtime.py",
+    "curriculum_runtime.py",
+    "curriculum.py",
+    "apollo_mlx.py",
+    "turbo_quant_mlx.py",
+    "ternary_quant_mlx.py",
+    "data/tokenizers/fineweb_1024_bpe.model"
+  ],
+  "base_args": {
+    "teacher-dataset": "~/transformer_research/parameter-golf/research/representation_learning/priors/qwen_phi_olmo_kernel_teacher_olmo_text_v1.npz",
+    "tokenizer-path": "~/transformer_research/parameter-golf/data/tokenizers/fineweb_1024_bpe.model",
+    "seed": 17,
+    "batch-size": 4,
+    "max-seq-len": 256,
+    "val-fraction": 0.2,
+    "distill-weight": 1.0,
+    "freeze-backbone": false,
+    "model-dim": 128,
+    "num-layers": 2,
+    "num-layer-templates": 2,
+    "num-heads": 8,
+    "num-kv-heads": 4,
+    "mlp-mult": 2,
+    "readout-mode": "mean_last",
+    "projection-mode": "direct"
+  },
+  "runs": [
+    {
+      "slug": "ce020_e8_lr1e3",
+      "args": {
+        "ce-weight": 0.2,
+        "epochs": 8,
+        "learning-rate": 0.001,
+        "output-dir": "~/transformer_research/parameter-golf/research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_olmo_product_tuning_v1/ce020_e8_lr1e3"
+      }
+    },
+    {
+      "slug": "ce025_e8_lr1e3",
+      "args": {
+        "ce-weight": 0.25,
+        "epochs": 8,
+        "learning-rate": 0.001,
+        "output-dir": "~/transformer_research/parameter-golf/research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_olmo_product_tuning_v1/ce025_e8_lr1e3"
+      }
+    },
+    {
+      "slug": "ce030_e8_lr1e3",
+      "args": {
+        "ce-weight": 0.3,
+        "epochs": 8,
+        "learning-rate": 0.001,
+        "output-dir": "~/transformer_research/parameter-golf/research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_olmo_product_tuning_v1/ce030_e8_lr1e3"
+      }
+    },
+    {
+      "slug": "ce025_e12_lr1e3",
+      "args": {
+        "ce-weight": 0.25,
+        "epochs": 12,
+        "learning-rate": 0.001,
+        "output-dir": "~/transformer_research/parameter-golf/research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_olmo_product_tuning_v1/ce025_e12_lr1e3"
+      }
+    },
+    {
+      "slug": "ce025_e12_lr5e4",
+      "args": {
+        "ce-weight": 0.25,
+        "epochs": 12,
+        "learning-rate": 0.0005,
+        "output-dir": "~/transformer_research/parameter-golf/research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_olmo_product_tuning_v1/ce025_e12_lr5e4"
+      }
+    },
+    {
+      "slug": "ce030_e12_lr5e4",
+      "args": {
+        "ce-weight": 0.3,
+        "epochs": 12,
+        "learning-rate": 0.0005,
+        "output-dir": "~/transformer_research/parameter-golf/research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_olmo_product_tuning_v1/ce030_e12_lr5e4"
+      }
+    }
+  ]
+}

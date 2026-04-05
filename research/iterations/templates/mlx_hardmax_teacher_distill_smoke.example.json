@@ -1,0 +1,93 @@
+{
+  "iteration_id": "iter_YYYYMMDD_HHMMSS_hardmax_teacher_distill_smoke",
+  "sweep_slug": "mlx-hardmax-teacher-distill-smoke",
+  "dispatch_mode": "queue",
+  "queue_parallelism": 2,
+  "wrapper_script": "/home/zaytor/transformer_research/parameter-golf/run_train_gpt_mlx_config.py",
+  "script": "/home/zaytor/transformer_research/parameter-golf/tools/train_hardmax_teacher_distill.py",
+  "support_files": [
+    "/home/zaytor/transformer_research/parameter-golf/tools/train_hardmax_teacher_distill.py",
+    "/home/zaytor/transformer_research/parameter-golf/train_gpt_mlx.py",
+    "/home/zaytor/transformer_research/parameter-golf/logic_register_mlx.py",
+    "/home/zaytor/transformer_research/parameter-golf/early_exit_aux.py",
+    "/home/zaytor/transformer_research/parameter-golf/token_category_weighting.py",
+    "/home/zaytor/transformer_research/parameter-golf/token_context_weighting.py",
+    "/home/zaytor/transformer_research/parameter-golf/sequential_data_filter.py",
+    "/home/zaytor/transformer_research/parameter-golf/structural_branching.py",
+    "/home/zaytor/transformer_research/parameter-golf/text_prosody_features.py",
+    "/home/zaytor/transformer_research/parameter-golf/replay_signal_runtime.py",
+    "/home/zaytor/transformer_research/parameter-golf/snapshot_signal_runtime.py",
+    "/home/zaytor/transformer_research/parameter-golf/teacher_signal_runtime.py",
+    "/home/zaytor/transformer_research/parameter-golf/turbo_quant_mlx.py",
+    "/home/zaytor/transformer_research/parameter-golf/ternary_quant_mlx.py",
+    "/home/zaytor/transformer_research/parameter-golf/apollo_mlx.py",
+    "/home/zaytor/transformer_research/parameter-golf/research/iterations/generated/20260403_hardmax_teacher_distill_assets/plain_control_mini07_teacher_resolved.json",
+    "/home/zaytor/transformer_research/parameter-golf/research/iterations/generated/20260326_sidecar_ref_clean_ab_1h/artifacts/plain_control_mini07_mlx_model.npz"
+  ],
+  "base_env": {
+    "DATA_PATH": "~/transformer_research/parameter-golf/data/datasets/fineweb10B_sp1024",
+    "EXTERNAL_TEACHER_ALLOW_PARTIAL_LOAD": 1,
+    "EXTERNAL_TEACHER_MIN_PARAM_FRACTION": 0.4,
+    "EXTERNAL_TEACHER_CONFIG_PATHS": "/home/zaytor/transformer_research/parameter-golf/research/iterations/generated/20260403_hardmax_teacher_distill_assets/plain_control_mini07_teacher_resolved.json",
+    "EXTERNAL_TEACHER_CHECKPOINT_PATHS": "/home/zaytor/transformer_research/parameter-golf/research/iterations/generated/20260326_sidecar_ref_clean_ab_1h/artifacts/plain_control_mini07_mlx_model.npz",
+    "TOKENIZER_PATH": "~/transformer_research/parameter-golf/data/tokenizers/fineweb_1024_bpe.model",
+    "VOCAB_SIZE": 1024
+  },
+  "base_args": {
+    "seed": 7,
+    "steps": 200,
+    "batch-size": 16,
+    "val-batch-size": 32,
+    "eval-every": 50,
+    "log-every": 25,
+    "lr": 0.0003,
+    "model-dim": 128,
+    "state-dim": 32,
+    "temperature": 1.0,
+    "teacher-confidence-threshold": 0.95,
+    "student-accept-threshold": 0.95,
+    "uncertain-token-weight": 0.05,
+    "confidence-weight": 0.1,
+    "usage-balance-weight": 0.01,
+    "diversity-weight": 0.01,
+    "val-max-seqs": 256,
+    "out-dir": "logs"
+  },
+  "runs": [
+    {
+      "slug": "teacher-distill-1state",
+      "notes": "Degenerate 1-state hardmax draft baseline against a frozen softmax teacher.",
+      "env": {
+        "RUN_ID": "mlx-hardmax-teacher-distill-smoke_teacher-distill-1state"
+      },
+      "args": {
+        "run-id": "mlx-hardmax-teacher-distill-smoke_teacher-distill-1state",
+        "num-states": 1
+      }
+    },
+    {
+      "slug": "teacher-distill-8state",
+      "notes": "Eight-state hardmax draft model trained on the teacher certainty surface.",
+      "env": {
+        "RUN_ID": "mlx-hardmax-teacher-distill-smoke_teacher-distill-8state"
+      },
+      "args": {
+        "run-id": "mlx-hardmax-teacher-distill-smoke_teacher-distill-8state",
+        "num-states": 8
+      }
+    },
+    {
+      "slug": "teacher-distill-8state-anticollapse",
+      "notes": "Eight-state hardmax draft with stronger anti-collapse pressure.",
+      "env": {
+        "RUN_ID": "mlx-hardmax-teacher-distill-smoke_teacher-distill-8state-anticollapse"
+      },
+      "args": {
+        "run-id": "mlx-hardmax-teacher-distill-smoke_teacher-distill-8state-anticollapse",
+        "num-states": 8,
+        "usage-balance-weight": 0.05,
+        "diversity-weight": 0.05
+      }
+    }
+  ]
+}

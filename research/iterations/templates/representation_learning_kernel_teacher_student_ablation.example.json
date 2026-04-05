@@ -1,0 +1,81 @@
+{
+  "notes": "Queue-mode ablation for the first kernel-student lane. Focus on the highest-value smoke follow-ups: unfreezing the backbone, testing pure teacher distillation, and increasing student capacity.",
+  "sweep_slug": "representation-learning-kernel-teacher-student-ablation",
+  "dispatch_mode": "queue",
+  "queue_parallelism": 1,
+  "queue_retry_attempts": 2,
+  "script": "tools/representation_learning/train_kernel_teacher_student.py",
+  "wrapper_script": "run_cli_json_config.py",
+  "support_files": [
+    "tools/representation_learning/schemas.py",
+    "tools/representation_learning/build_kernel_teacher_text_dataset.py",
+    "tools/representation_learning/train_kernel_teacher_student.py",
+    "train_gpt_mlx.py",
+    "logic_register_mlx.py",
+    "early_exit_aux.py",
+    "text_prosody_features.py",
+    "structural_branching.py",
+    "token_category_weighting.py",
+    "token_context_weighting.py",
+    "sequential_data_filter.py",
+    "replay_signal_runtime.py",
+    "snapshot_signal_runtime.py",
+    "teacher_signal_runtime.py",
+    "curriculum_runtime.py",
+    "curriculum.py",
+    "apollo_mlx.py",
+    "turbo_quant_mlx.py",
+    "ternary_quant_mlx.py",
+    "data/tokenizers/fineweb_1024_bpe.model"
+  ],
+  "base_args": {
+    "teacher-dataset": "~/transformer_research/parameter-golf/research/representation_learning/priors/qwen_phi_olmo_kernel_teacher_text_v1.npz",
+    "tokenizer-path": "~/transformer_research/parameter-golf/data/tokenizers/fineweb_1024_bpe.model",
+    "seed": 17,
+    "batch-size": 4,
+    "epochs": 4,
+    "learning-rate": 0.0003,
+    "max-seq-len": 256,
+    "val-fraction": 0.2,
+    "ce-weight": 0.25,
+    "distill-weight": 1.0,
+    "freeze-backbone": false,
+    "model-dim": 128,
+    "num-layers": 2,
+    "num-layer-templates": 2,
+    "num-heads": 8,
+    "num-kv-heads": 4,
+    "mlp-mult": 2
+  },
+  "runs": [
+    {
+      "slug": "unfrozen-ce025-distill",
+      "notes": "Same small student as the smoke, but allow the backbone to adapt.",
+      "args": {
+        "output-dir": "~/transformer_research/parameter-golf/research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_ablation_v1/unfrozen_ce025_distill"
+      }
+    },
+    {
+      "slug": "unfrozen-distill-only",
+      "notes": "Remove the token CE term to test whether pure teacher distillation fits the cleared embedding target better.",
+      "args": {
+        "ce-weight": 0.0,
+        "output-dir": "~/transformer_research/parameter-golf/research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_ablation_v1/unfrozen_distill_only"
+      }
+    },
+    {
+      "slug": "bigger-unfrozen-distill-only",
+      "notes": "Increase capacity while keeping pure teacher distillation to test whether the smoke was bottlenecked by model size.",
+      "args": {
+        "ce-weight": 0.0,
+        "model-dim": 256,
+        "num-layers": 4,
+        "num-layer-templates": 4,
+        "num-heads": 8,
+        "num-kv-heads": 4,
+        "mlp-mult": 4,
+        "output-dir": "~/transformer_research/parameter-golf/research/representation_learning/reports/qwen_phi_olmo_kernel_teacher_student_ablation_v1/bigger_unfrozen_distill_only"
+      }
+    }
+  ]
+}

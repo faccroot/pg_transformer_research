@@ -3,6 +3,11 @@
 <br>
 <br>
 
+> Fork note: this repo is also being maintained as a public research fork. For
+> a concise summary of the approach, breakthrough-area alignment, and what is
+> intentionally excluded from the public mirror, see
+> [PUBLIC_FORK_GUIDE.md](PUBLIC_FORK_GUIDE.md).
+
 **OpenAI Model Craft Challenge: Parameter Golf** is a challenge to train the best language model that fits in a 16MB artifact and trains in under 10 minutes on 8xH100s, evaluated by compression on the FineWeb validation set (tokenizer-agnostic, bits per byte).
 
 This challenge is heavily inspired by the [NanoGPT Speedrunning](https://github.com/KellerJordan/modded-nanogpt) challenge, where participants compete to train a model that reaches 3.28 FineWeb validation loss as quickly as possible. We're excited to see how optimizing for a parameter-constrained setting pushes people toward unique architectures (test-time compute, aggressive parameter tying, depth recurrence, low-rank training, ...), compression schemes (low precision, QAT, bitnets, novel tokenizers, ...), and other creative submissions (test-time training, long context, megakernels ...). 
